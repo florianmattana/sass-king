@@ -1,6 +1,6 @@
 # Kernel 06 — vector_smem (shared memory scalar)
 
-Premier kernel utilisant la shared memory. Le source fait un round-trip `global → shared → shared → global` avec un shift d'indice pour forcer le compilateur à garder le passage par shared.
+First kernel using shared memory. Source performs a round trip `global to shared to shared to global` with an index shift to prevent the compiler from optimizing the shared path away.
 
 ## Source
 
@@ -18,204 +18,204 @@ __global__ void vector_smem(const float* a, float* c, int n) {
 }
 ```
 
-Launch : `<<<4, 256>>>` sur n=1024.
+Launch: `<<<4, 256>>>` with n=1024.
 
-## Structure du SASS principal (30 instructions)
+## SASS main body structure (30 instructions)
 
-Le kernel suit le squelette en 6 sections déjà identifié, puis ajoute :
+Follows the 6 section skeleton from earlier kernels, then adds:
 
 ```
-[Prologue : 8 instructions]
-  Stack pointer, setup ID, calcul index, bounds check
-  Identique aux kernels 01-05.
+[Prologue: 8 instructions]
+  Stack pointer, ID setup, index computation, bounds check.
+  Identical to kernels 01-05.
 
-[Setup global a[i] : 4 instructions]
-  LDC.64 pointeur a, LDCU.64 descriptor global, IMAD.WIDE adresse, LDG.E load.
-  Identique aux kernels précédents.
+[Global load a[i]: 4 instructions]
+  LDC.64 pointer a, LDCU.64 global descriptor, IMAD.WIDE address, LDG.E load.
+  Identical to earlier kernels.
 
-[Nouveau : Setup base shared et descriptor : 4 instructions]
+[New: shared base and descriptor setup: 4 instructions]
   S2UR UR5, SR_CgaCtaId
   UMOV UR4, 0x400
   ULEA UR4, UR5, UR4, 0x18
-  
-  UR4 final est la base pour les accès shared du kernel. Construction non encore 
-  entièrement comprise (cf hypothèses ouvertes).
 
-[Nouveau : Write path shared : 3 instructions]
+  UR4 becomes the shared memory base for the kernel. Construction not fully
+  understood yet (see open hypotheses).
+
+[New: shared write path: 3 instructions]
   LEA R7, R0, UR4, 0x2        ; &smem[tid] = UR4 + tid*4
   STS [R7], R2                 ; smem[tid] = a[i]
   BAR.SYNC.DEFER_BLOCKING 0x0  ; __syncthreads()
 
-[Slowpath modulo : 1 CALL vers une fonction de 21 instructions]
+[Modulo slowpath: 1 CALL into a 21 instruction function]
   MOV R7, 0x170
   CALL.REL.NOINC __cuda_sm20_rem_u16
 
-[Read path shared + store global : 4 instructions]
+[Shared read path + global store: 4 instructions]
   LEA R0, R0, UR4, 0x2        ; &smem[src]
   LDS R7, [R0]                 ; smem[src]
   IMAD.WIDE R2, R5, 0x4, R2    ; &c[i]
   STG.E desc[UR6][R2.64], R7   ; c[i] = smem[src]
 
-[Exit + fonction modulo placée après : ~25 instructions]
+[Exit + modulo function placed after: ~25 instructions]
 ```
 
-## Observations solides (vérifiées sur variantes 06b-06i)
+## Solid observations (verified across variants 06b-06i)
 
-### 1. Shared memory : architecture d'adressage
+### 1. Shared memory: addressing architecture
 
-**Un seul UMOV + dérivations par addition pour N buffers shared.**
-Confirmé par kernel 06g avec deux `__shared__` : un seul `UMOV UR4, 0x400` puis `UIADD3 UR5, UPT, UPT, UR4, 0x400, URZ` pour dériver la base du deuxième buffer.
+**One UMOV plus derivations by addition for N shared buffers.**
+Verified in kernel 06g with two `__shared__` arrays: a single `UMOV UR4, 0x400` followed by `UIADD3 UR5, UPT, UPT, UR4, 0x400, URZ` to derive the base of the second buffer.
 
-**Les buffers shared sont placés consécutivement en mémoire.**
-L'offset entre deux buffers `smem_a[256]` et `smem_b[256]` est exactement `0x400 = 1024 bytes`, soit la taille en bytes de `smem_a`. Pas d'alignement supplémentaire inséré automatiquement.
+**Shared buffers are placed consecutively in memory.**
+The offset between two buffers `smem_a[256]` and `smem_b[256]` is exactly `0x400 = 1024 bytes`, which is the size of `smem_a` in bytes. No automatic padding inserted between them.
 
-**Adressage shared ne nécessite pas de descriptor.**
-Contrairement à LDG/STG global qui utilisent `desc[UR][R.64]`, les accès shared utilisent `[R]` direct ou `[R+UR]`. La base shared est encodée dans le registre d'adresse lui-même.
+**Shared addressing does not use a descriptor.**
+Unlike LDG/STG which use `desc[UR][R.64]`, shared accesses use direct `[R]` or `[R+UR]`. The shared base is encoded in the address register itself.
 
-**Mode `[R+UR]` pour lire plusieurs buffers à la même position.**
-Observé dans kernel 06g : `LDS R8, [R6+UR4]` et `LDS R11, [R6+UR5]`. Un seul calcul d'adresse per-thread (R6 masqué par le modulo), deux offsets uniformes pour les deux buffers. Pattern optimal pour le multi-buffer.
+**`[R+UR]` mode for reading multiple buffers at the same position.**
+Observed in kernel 06g: `LDS R8, [R6+UR4]` and `LDS R11, [R6+UR5]`. A single per-thread address computation (R6 after modulo mask), two uniform offsets for the two buffers. Optimal pattern for multi buffer reads.
 
-**STS successifs peuvent être émis sans BAR intermédiaire.**
-Observé dans kernel 06g : deux STS consécutifs, une seule BAR.SYNC après. Le `__syncthreads()` unique couvre tous les stores précédents dans le block.
+**Consecutive STS can be emitted without intermediate BAR.**
+Observed in kernel 06g: two STS back to back, a single BAR.SYNC after both. One `__syncthreads()` covers all preceding stores in the block.
 
-### 2. Modulo entier : trois modes distincts selon la constante
+### 2. Integer modulo: three distinct modes based on the divisor
 
-| Source | Stratégie ptxas | Instructions pour modulo |
+| Source | ptxas strategy | Instructions for modulo |
 |---|---|---|
-| `% blockDim.x` (runtime) | CALL `__cuda_sm20_rem_u16` + fonction 21 instructions | 1 CALL + corps |
-| `% 255` (non puissance de 2) | Inline reciprocal multiplication (magic number) | ~10 inline |
-| `% 256` (puissance de 2) | Fusion dans LEA + LOP3 mask | 2 instructions |
-| `& 255` | **Identique à `% 256`** (SASS byte-exact) | 2 instructions |
+| `% blockDim.x` (runtime) | CALL `__cuda_sm20_rem_u16` + 21 instruction function | 1 CALL + body |
+| `% 255` (non power of 2) | Inline reciprocal multiplication (magic number) | ~10 inline |
+| `% 256` (power of 2) | Fused into LEA + LOP3 mask | 2 instructions |
+| `& 255` | **Identical to `% 256`** (byte exact SASS) | 2 instructions |
 
-ptxas reconnaît trois patterns distincts à la compilation et choisit la stratégie adaptée. La forme byte-exact prouve que ptxas canonicalise `% 2^k` et `& (2^k - 1)` vers la même représentation interne.
+ptxas recognizes three distinct patterns at compile time and chooses the adapted strategy. The byte exact match proves that ptxas canonicalizes `% 2^k` and `& (2^k - 1)` to the same internal representation.
 
-### 3. Fonction de modulo : caractéristiques
+### 3. Modulo function: characteristics
 
-**Une seule instance de la fonction pour N appels (kernel 06i).**
-Deux modulos avec des diviseurs runtime différents dans le même kernel → deux CALL vers la même adresse de fonction. Taille code constante indépendamment du nombre d'appels.
+**Single instance of the function shared across N calls (kernel 06i).**
+Two modulos with different runtime divisors in the same kernel produce two CALLs targeting the same function address. Binary size stays constant regardless of the number of calls.
 
-**ABI observée pour `__cuda_sm20_rem_u16`.**
-- R8 : dividende u16 en entrée
-- R9 : diviseur u16 en entrée, reste en sortie
-- Rn (R7 ou R10 selon kernel) : return address, écrite par le caller via MOV avant CALL
+**Observed ABI for `__cuda_sm20_rem_u16`.**
+- R8: u16 dividend input
+- R9: u16 divisor input, remainder output
+- Rn (R7 or R10 depending on kernel): return address, written by the caller via MOV before CALL
 
-**Coût runtime non amorti.**
-Chaque appel exécute la fonction complète (~30 cycles minimum, dont MUFU.RCP sur pipeline XU). N appels = N fois ce coût.
+**Runtime cost is not amortized.**
+Every call executes the full function (~30 cycles minimum, including MUFU.RCP on the XU pipeline). N calls mean N times this cost.
 
-**Division entière : fonction séparée mais corps similaire (kernel 06h).**
-Division et modulo ont deux fonctions distinctes partageant la même primitive (reciprocal multiplication par magic number), mais diffèrent sur la dernière étape. Division s'arrête au quotient. Modulo calcule quotient puis reconstruit reste via IMAD.
+**Integer division: separate function with similar body (kernel 06h).**
+Division and modulo have two distinct functions sharing the same primitive (reciprocal multiplication with magic number), differing only in the final step. Division stops at the quotient. Modulo computes the quotient then reconstructs the remainder via IMAD.
 
-**Conséquence pratique.**
-Utiliser `/` et `%` dans le même kernel sur les mêmes opérandes = deux CALL distincts. Pour économiser un CALL, écrire `q = a / b; r = a - q * b;` au lieu de `q = a / b; r = a % b;`.
+**Practical consequence.**
+Using `/` and `%` in the same kernel on the same operands produces two separate CALLs. To save one CALL, write `q = a / b; r = a - q * b;` instead of `q = a / b; r = a % b;`.
 
-### 4. Mécanisme CALL/RET : link register manuel
+### 4. CALL/RET mechanism: manual link register
 
-**CALL.REL.NOINC et RET.REL.NODEC.**
-Le hardware ne gère pas automatiquement le link register. Le caller écrit l'adresse de retour dans un registre (MOV Rn, 0x170 avant CALL) et la callee copie cette valeur dans son registre de retour (MOV R2, Rn) avant le RET.
+**CALL.REL.NOINC and RET.REL.NODEC.**
+The hardware does not auto manage the link register. The caller writes the return address into a register (MOV Rn, 0x170 before CALL) and the callee copies this value to its return register (MOV R2, Rn) before RET.
 
-Ce mécanisme permet à ptxas de gérer plusieurs appels à la même fonction avec des adresses de retour différentes sans bibliothèque runtime ni stack pointer automatique.
+This mechanism lets ptxas handle multiple calls to the same function with different return addresses without a runtime library or automatic stack pointer.
 
-### 5. Masquage u16 autour des CALL
+### 5. u16 masking around CALL
 
-**Avant l'appel à `__cuda_sm20_rem_u16`.**
+**Before the CALL to `__cuda_sm20_rem_u16`.**
 ```
 LOP3.LUT Rn, Rn, 0xffff, RZ, 0xc0, !PT
 ```
-Tronque l'opérande à 16 bits. La fonction a une ABI u16 (indiquée par `_u16` dans son nom), donc les arguments doivent respecter ce format.
+Truncates the operand to 16 bits. The function has a u16 ABI (indicated by `_u16` in its name), so arguments must respect this format.
 
-Le masque n'est pas défensif ou arbitraire, il est **obligatoire** par l'ABI.
+The mask is not defensive or arbitrary, it is **mandatory** by the ABI.
 
-### 6. BAR.SYNC sur SM120
+### 6. BAR.SYNC on SM120
 
-**Modifier `.DEFER_BLOCKING` observé.**
+**`.DEFER_BLOCKING` modifier observed.**
 ```
 BAR.SYNC.DEFER_BLOCKING 0x0
 ```
 
-**Pipeline : ADU** (observé dans gpuasm, contrairement à l'intuition CBU).
+**Pipeline: ADU** (observed in gpuasm, contrary to the CBU intuition).
 
-**Argument 0x0 = numéro de barrier.**
-CUDA expose 16 barriers hardware par block. `__syncthreads()` utilise toujours la barrier 0.
+**Argument 0x0 is the barrier number.**
+CUDA exposes 16 hardware barriers per block. `__syncthreads()` always uses barrier 0.
 
-### 7. Premier pipeline XU observé (fonction modulo)
+### 7. First XU pipeline usage (modulo function)
 
-La fonction modulo utilise MUFU.RCP (reciprocal), qui tourne sur le pipeline **XU** (Transcendental Unit). C'est le premier usage de XU dans nos kernels.
+The modulo function uses MUFU.RCP (reciprocal), which runs on the **XU** pipeline (Transcendental Unit). This is the first XU usage in our kernels.
 
-Conversions I2F et F2I observées dans la même fonction, également sur XU.
+I2F and F2I conversions observed in the same function, also on XU.
 
-### 8. Nouveau special register : SR_CgaCtaId
+### 8. New special register: SR_CgaCtaId
 
-Accessible via S2UR, utilisé dans la construction de la base shared. CGA = Cooperative Grid Array (terminologie cluster SM90+).
+Accessible via S2UR, used in the shared base construction. CGA stands for Cooperative Grid Array (SM90+ cluster terminology).
 
-## Test UMOV UR4, 0x400 : trois hypothèses rejetées
+## UMOV UR4, 0x400 test: three hypotheses rejected
 
-Trois variantes testées pour identifier ce que code `0x400` :
+Three variants tested to identify what `0x400` encodes:
 
-| Variante | Shared size | Block size | Modulo | UMOV observé |
+| Variant | Shared size | Block size | Modulo | UMOV observed |
 |---|---|---|---|---|
 | 06b | 256 floats (1024 B) | 256 | 256 | **0x400** |
 | 06e | 128 floats (512 B) | 128 | 128 | **0x400** |
 | 06f | 512 floats (2048 B) | 512 | 512 | **0x400** |
 
-**Rejeté.** `0x400` n'encode ni la taille shared, ni la taille de block, ni la launch config.
+**Rejected.** `0x400` does not encode shared size, block size, or launch config.
 
-**Ce qui change avec la taille.** Le masque LOP3 :
+**What does change with size.** The LOP3 mask:
 - 256 floats → 0x3fc = 1020 = (256-1) × 4
 - 128 floats → 0x1fc = 508 = (128-1) × 4
 - 512 floats → 0x7fc = 2044 = (512-1) × 4
 
-**Conclusion.** `0x400` semble être une constante architecturale ou un paramètre du format de descriptor shared, indépendant des paramètres du kernel. À traiter au kernel 07.
+**Conclusion.** `0x400` appears to be an architectural constant or a parameter of the shared descriptor format, independent of kernel parameters. To be revisited in kernel 07.
 
-## Hypothèses ouvertes à la fin du chapitre 06
+## Open hypotheses at the end of chapter 06
 
-1. **Signification de `UMOV UR4, 0x400`.** Constante architecturale probable, rôle exact inconnu.
-2. **Fonction division sans label symbolique dans le dump.** Pourquoi le modulo est nommé et pas la division.
-3. **SR_CgaCtaId dans un kernel sans clusters.** Fallback sur un ID par défaut ou ID block implicite.
-4. **`.DEFER_BLOCKING` sur BAR.SYNC.** Nouveau modifier SM90+ ou hérité.
-5. **PRMT avec `0x9910` et `0x7710` dans la fonction modulo 255.** Manipulation byte-level non analysée.
-6. **Séquence `HFMA2 R3, -RZ, RZ, 15, 0` et FSETP subnormal.** Rôle précis dans l'algorithme reciprocal multiplication.
-7. **Choix du registre de return address** dans la calling convention (R7 vs R10 selon kernel).
+1. **Meaning of `UMOV UR4, 0x400`.** Likely architectural constant, exact role unknown.
+2. **Division function lacks a symbolic label in the dump.** Why modulo is named and division is not.
+3. **SR_CgaCtaId in a kernel without clusters.** Fallback on a default ID or implicit block ID.
+4. **`.DEFER_BLOCKING` on BAR.SYNC.** New SM90+ modifier or inherited.
+5. **PRMT with `0x9910` and `0x7710` in the `% 255` function.** Byte level manipulation not analyzed.
+6. **`HFMA2 R3, -RZ, RZ, 15, 0` sequence and subnormal FSETP.** Exact role in the reciprocal multiplication algorithm.
+7. **Return address register choice** in the calling convention (R7 vs R10 across kernels).
 
-## Instructions nouvelles observées dans ce chapitre
+## New instructions observed in this chapter
 
-Liste des opcodes apparus pour la première fois dans nos dumps :
+Opcodes appearing for the first time in our dumps:
 
 | Opcode | Usage |
 |---|---|
 | STS | Store to Shared |
 | LDS | Load from Shared |
-| BAR.SYNC.DEFER_BLOCKING | Block-level barrier |
-| UMOV | Uniform MOV (matérialisation d'immédiat dans UR) |
+| BAR.SYNC.DEFER_BLOCKING | Block level barrier |
+| UMOV | Uniform MOV (immediate materialization into UR) |
 | ULEA | Uniform Load Effective Address |
-| UIADD3 | Uniform Integer Add 3-input |
-| LOP3.LUT | Logic Operation 3-input avec LUT |
-| LEA | Load Effective Address (per-thread) |
-| CALL.REL.NOINC | Function call avec link register manuel |
-| RET.REL.NODEC | Function return avec link register manuel |
-| MUFU.RCP | Reciprocal (pipeline XU) |
-| I2F.U16 | Integer to Float (conversion, pipeline XU) |
-| F2I.U32.TRUNC.NTZ | Float to Integer (conversion, pipeline XU) |
-| FSETP.GEU.AND | FP compare predicate avec combinaison |
-| FSEL | FP select (ternaire) |
+| UIADD3 | Uniform Integer 3 input Add |
+| LOP3.LUT | 3 input Logic Operation with LUT |
+| LEA | Load Effective Address (per thread) |
+| CALL.REL.NOINC | Function call with manual link register |
+| RET.REL.NODEC | Function return with manual link register |
+| MUFU.RCP | Reciprocal (XU pipeline) |
+| I2F.U16 | Integer to Float (conversion, XU pipeline) |
+| F2I.U32.TRUNC.NTZ | Float to Integer (conversion, XU pipeline) |
+| FSETP.GEU.AND | FP compare predicate with combination |
+| FSEL | FP select (ternary) |
 | PRMT | Byte permutation |
 | SHF.R.U32.HI | Funnel shift right, high half |
-| S2R / S2UR pour SR_CgaCtaId | Nouveau special register |
+| S2R / S2UR for SR_CgaCtaId | New special register |
 
-## Ce que ce chapitre ajoute à la compétence de lecture SASS
+## What this chapter adds to SASS reading skills
 
-**Reconnaître la shared memory en un coup d'œil.**
-STS, LDS, BAR.SYNC, et la construction caractéristique via `UMOV + ULEA` forment un pattern visuel identifiable.
+**Recognize shared memory at a glance.**
+STS, LDS, BAR.SYNC, and the characteristic `UMOV + ULEA` construction form an identifiable visual pattern.
 
-**Diagnostiquer un slowpath arithmétique.**
-La présence d'un CALL dans un kernel qui ne devrait en avoir aucun signale division/modulo runtime, math library, ou fonction non inlinable. Chercher le MOV setup juste avant et la fonction placée après EXIT confirme le pattern.
+**Diagnose an arithmetic slowpath.**
+A CALL in a kernel that should have none signals runtime division/modulo, math library, or a non inlinable function. Looking for the MOV setup right before and the function placed after EXIT confirms the pattern.
 
-**Choisir la bonne forme source.**
-- Modulo / division par constante puissance de 2 : optimal, pas de coût caché.
-- Modulo / division par constante non puissance de 2 : coût modéré inline.
-- Modulo / division par variable runtime : coûteux, CALL externe.
+**Choose the right source form.**
+- Modulo/division by a power of 2 constant: optimal, no hidden cost.
+- Modulo/division by a non power of 2 constant: moderate inline cost.
+- Modulo/division by a runtime variable: expensive, external CALL.
 
-**Prévoir le layout shared.**
-Plusieurs arrays `__shared__` sont empilés dans l'ordre de déclaration. Pas de padding automatique. Pas de surcoût linéaire de setup pour des buffers multiples.
+**Predict shared layout.**
+Multiple `__shared__` arrays stack in declaration order. No automatic padding. No linear setup overhead for multiple buffers.
 
-**Regrouper les `__syncthreads()`.**
-Plusieurs stores shared consécutifs n'ont besoin que d'une BAR finale. ptxas ne fusionne pas les barriers, c'est au programmeur de les écrire efficacement.
+**Group `__syncthreads()` calls.**
+Several consecutive shared stores only need one final BAR. ptxas does not fuse barriers, the programmer has to write them efficiently.
