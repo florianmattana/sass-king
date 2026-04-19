@@ -635,6 +635,59 @@ ptxas systematically places independent instructions between a producer and its 
 * **BSSY / BSYNC.RECONVERGENT** wrapping a short section means ptxas detected divergence before a warp-synchronous operation.
 * **Consecutive NOPs between arithmetic instructions** mean the pipeline cannot keep up (FP64 on consumer parts, or ILP shortage).
 
+### Reading control code annotations
+
+Every SASS instruction on SM120 is 128 bits: 64 bits opcode + 64 bits control code. The control code encodes scheduling information that cuobjdump and gpuasm surface as text annotations. You rarely need to decode the bits yourself because the tools do it for you.
+
+The annotations you will encounter in our analyses:
+
+* **`stall=N`** where N is 0 to 15. Number of cycles the warp must wait after issuing this instruction before it can issue the next one from the same warp. Other warps can run during this stall. Typical values: 1 to 5 for normal arithmetic, 13 for ISETP→@P EXIT (cross-pipeline transfer), 12 to 15 require the yield flag.
+* **`yield`** (flag). When set, the scheduler is allowed to switch to another warp. Always set on every instruction with a scoreboard wait. A reliable heuristic: if you see a scoreboard wait without yield, something is unusual.
+* **`SBS=N`** where N is 0 to 5. This instruction signals scoreboard N when its variable-latency result is ready. Set on LDG, LDS, LDC, S2R, MUFU, BAR, SHFL, VOTE, MATCH, REDUX. Not set on FFMA, FADD, IMAD, ISETP (fixed latency).
+* **`wait={SBN, SBM, ...}`** Set of scoreboards that must be clear before this instruction can issue. Mask of 6 bits. Used on consumers of variable-latency producers.
+* **`.reuse`** suffix on a source operand (not on the opcode). Tells the hardware to cache the register value in the reuse cache to save a register file read next cycle.
+
+What to look for in practice:
+
+* Many consecutive `stall=15` signals a pipeline saturation or ILP shortage.
+* Many consecutive `stall=1` with useful work is a healthy pipelined stream.
+* Long `wait={SB_something}` chains on a single scoreboard mean a memory-bound stretch.
+* Multiple LDGs sharing an SBS is a compiler optimization (co-consumed producers).
+* A scoreboard wait without yield is unusual and worth investigating.
+
+The exact bit layout follows the Volta format (Jia et al. 2018) with likely extensions in the upper bits for Blackwell-specific features. See DECISIONS.md D006 for the gaps we have consciously left open (bit-level decoding not implemented).
+
+### Reading opcode modifiers
+
+SASS opcodes carry suffixes that change their semantics. Most follow intuitive conventions. Only a few are SM120-specific and worth explicit attention.
+
+Intuitive suffixes (do not require a glossary):
+
+* **`.64`, `.128`, `.256`**: memory transaction width in bits.
+* **`.U32`, `.S32`**: unsigned or signed 32-bit interpretation.
+* **`.HI`, `.LO`**: high or low half of a wider result.
+* **`.WIDE`**: result is 64-bit (register pair) from a 32-bit multiply.
+* **`.E`**: external, used for global memory to distinguish from LDS/LDC.
+* **`.GE`, `.LT`, `.EQ`, `.NE`, `.GT`, `.LE`**: comparison operators.
+* **`.AND`, `.OR`, `.XOR`**: combines the result with a predicate input.
+* **`.LUT`**: 3-input lookup table (LOP3 and its uniform cousins).
+
+SM120-specific or non-obvious suffixes worth knowing:
+
+* **`.ENL2`** (appears on LDG/STG at 256 bits): enlarged encoding using two register base fields instead of one. Needed because 8 consecutive registers cannot fit a single 5-bit register field in the opcode. Observed only at 256-bit width.
+* **`.DEFER_BLOCKING`** (appears on BAR.SYNC): a variant of block-level barrier that allows the warp to defer blocking until necessary. Default form of `__syncthreads()` on SM120.
+* **`.RECONVERGENT`** (appears on BSSY and BSYNC): Independent Thread Scheduling reconvergence scope. Wraps warp-synchronous instructions that follow divergent code.
+* **`.GEU`** (appears on FSETP): greater equal unordered, FP semantics where NaN comparisons return true.
+* **`.TRUNC.NTZ`** (appears on F2I): truncation with non-toward-zero rounding for negative zero edge case.
+
+Operand-level flags (not opcode suffixes but worth distinguishing):
+
+* **`.reuse`** on a source operand: hint to the hardware to cache that value in the reuse cache.
+* **`.64`** on a register name (e.g., `R2.64`): treats R2:R3 as a 64-bit register pair.
+* **`.H0`, `.H1`** on a register name: selects the low or high 16 bits of a packed half-precision register.
+
+Modifiers we have not yet encountered in our dumps but that appear in the Blackwell ISA reference are not covered here.
+
 ### Global diagnostic workflow
 
 When opening any SASS dump for performance work:
