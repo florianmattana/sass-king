@@ -217,13 +217,119 @@ Three optimization strategies derived from the FFMA immediate slot rule:
 
 ### Open hypotheses
 
-* [HYP] `UMOV UR4, 0x400` is an architectural constant unrelated to kernel parameters. Exact role unknown. To investigate in kernel 07.
+* [HYP] Meaning of the specific value `0x400` in `UMOV UR4, 0x400`. Confirmed inert across shared size (1, 128, 256, 512 floats), type (float vs int), and static vs dynamic shared. Present only when `__shared__` is declared. Possible interpretations not tested: architectural SM120 constant (base or offset for shared descriptor), bit field format for the following ULEA (where `0x18 = 24` is the shift), value tied to max concurrent blocks per SM or shared banks. To investigate by comparing with SM89 or SM90a dump, or by reading NVIDIA shared descriptor format documentation for SM90+.
 * [HYP] `SR_CgaCtaId` falls back to a default value when the kernel does not declare `__cluster_dims__`. Unverified.
 * [HYP] `.DEFER_BLOCKING` on BAR.SYNC is an SM90+ modifier. To verify by comparing with SM80 or SM89 dumps.
 * [HYP] PRMT with `0x9910` and `0x7710` in the `% 255` function handles byte level manipulation for u16 truncation. Not analyzed.
 * [HYP] `HFMA2 R3, -RZ, RZ, 15, 0` and the subnormal FSETP in the modulo helper handle edge cases of the reciprocal multiplication. Role not fully worked out.
 * [HYP] The return address register choice (R7 in kernel 06, R10 in kernel 06i) depends on caller register pressure at the call site. To test with a caller under low pressure.
 * [HYP] Why the modulo function has a symbolic label (`__cuda_sm20_rem_u16`) in the dump but the division function does not.
+
+---
+
+## Kernel 07 UMOV 0x400 investigation
+
+Chapter focused on isolating the meaning of the `UMOV UR4, 0x400` instruction carried over from kernel 06. Four variants tested, combined with kernel 01 as the no-shared control.
+
+### Variant 07a (`float[1]`, minimal shared)
+
+* [OBS] UMOV unchanged at 0x400 despite shared being reduced to 4 bytes (1 float).
+* [OBS] `if (threadIdx.x == 0)` triggers predication on the shared write path. Instructions `LDC.64`, `IMAD.WIDE`, `LDG.E`, `STS` are all prefixed `@!P0` where P0 is the `tid != 0` test. Only thread 0 executes, the other 31 fetch but do not execute. Confirms the predication rule for short conditional blocks.
+* [OBS] With only one shared element accessed by one thread, no LOP3 mask is needed. The shared address is `UR4` directly, used as `[UR4]` for the STS.
+
+### Variant 07b (`int[256]`)
+
+* [OBS] UMOV unchanged at 0x400. SASS is nearly identical to 06b byte for byte.
+* [OBS] The type of the shared array does not affect the generated SASS for a simple read-write pattern, since both int and float occupy 4 bytes. The LOP3 mask (0x3fc), the LEA shifts (0x2), the IMAD.WIDE stride (0x4) all remain the same because they encode sizes, not types.
+
+### Variant 07c (`extern __shared__`)
+
+* [OBS] UMOV unchanged at 0x400 despite shared size being a runtime parameter.
+* [OBS] ptxas does not know the size at compile time, so it falls back to the runtime modulo pattern seen in kernel 06: CALL to `__cuda_sm20_rem_u16` to compute `(tid + 1) % blockDim.x`.
+* [OBS] Dynamic shared memory is treated identically to static shared at the addressing level. Only the size bound (source of the modulo) differs.
+
+### Kernel 01 (no shared, control)
+
+* [OBS] UMOV 0x400 is **absent** from the SASS. The S2UR for `SR_CgaCtaId` is also absent. Neither the UMOV nor the CgaCtaId read appears unless the kernel declares `__shared__`.
+
+### Resolved hypotheses
+
+* [RES] `UMOV UR4, 0x400` appears if and only if the kernel uses shared memory. The value 0x400 is inert across shared size, shared type, static vs dynamic declaration, and number of shared buffers. **It is an architectural constant tied to the shared addressing mechanism on SM120.** Exact semantic meaning of the value itself is still unknown.
+* [RES] Predication is systematically used for short conditional bodies inside a kernel, not only for bounds check exits. Variant 07a confirms ptxas prefixes individual instructions with `@!P0` rather than branching around a 4-instruction body.
+
+### Open hypotheses
+
+* [HYP] Meaning of the specific value `0x400` in `UMOV UR4, 0x400`. Possible interpretations not tested: architectural SM120 constant (base or offset for shared descriptor), bit field format for the following ULEA (where `0x18 = 24` is the shift), value tied to max concurrent blocks per SM or shared banks. To investigate by comparing with SM89 or SM90a dump, or by reading NVIDIA shared descriptor format documentation for SM90+.
+
+---
+
+## Kernel 08 vector_load (vectorized global memory access)
+
+Chapter focused on vectorized LDG/STG instructions. Seven variants tested to map the full spectrum of SM120 load widths and identify the rules.
+
+### Observations
+
+* [OBS] SM120 supports five distinct LDG widths: 32 bits (LDG.E), 64 bits (LDG.E.64), 128 bits (LDG.E.128), 256 bits (LDG.E.ENL2.256). 256 is the maximum.
+* [OBS] At 256 bits the `.ENL2` modifier appears. The instruction takes two destination base registers (R16, R12) instead of one, because 8 consecutive registers cannot be referenced by a single register field in the opcode encoding.
+* [OBS] The IMAD.WIDE stride immediate always equals sizeof(T) in bytes. Verified across float (0x4), float2 (0x8), float4 (0x10), float8 (0x20), float16 (0x40), double4_32a (0x20).
+* [OBS] Vector arithmetic is not packed at SASS level. A source `float4 + float4` produces 4 separate FADD, one per component. No SIMD add instruction for FP32 on SM120.
+* [OBS] FP64 compute is drastically slower than FP32. ptxas inserts 3 to 4 NOP between consecutive DADD instructions, something never seen with FADD in any earlier kernel.
+* [OBS] Useful compute ratio scales with vector width: 5% for kernel 01 (scalar float), 18% for 08a (float4), 36% for 08d (float8). Plumbing cost stays constant, compute scales with elements per thread.
+
+### Variant 08a (`float4`)
+
+* [OBS] `LDG.E.128` loads 128 bits into 4 consecutive registers from a single base register.
+* [OBS] `STG.E.128` stores 128 bits from 4 consecutive registers.
+* [OBS] Canonical vectorization case. 22 total instructions for a 4x data volume compared to kernel 01.
+
+### Variant 08b (`float*` with manual indexing)
+
+* [RES] ptxas does NOT auto-vectorize scalar access patterns, even when they are trivially contiguous and provably aligned. **Confirmed.** 8 × LDG.E emitted instead of 2 × LDG.E.128.
+* [OBS] ptxas does factor the address arithmetic (one IMAD.WIDE per array, then immediate offsets `+0x4`, `+0x8`, `+0xc` on the loads), but stops short of fusing the loads themselves.
+* [OBS] `SHF.L.U32 R9, R0, 0x2, RZ` used for `i * 4`. ptxas recognizes multiplication by a power of 2 as a shift.
+* [OBS] Vectorization on SM120 is syntactic. Must use vector types (`float4*`, `double4_32a*`) or `reinterpret_cast` to trigger wide LDG.
+
+### Variant 08c (`float2`)
+
+* [OBS] `LDG.E.64` exists and is used for 64-bit transfers. Destination is a pair of consecutive registers.
+* [OBS] Fills the 64-bit slot in the width spectrum between scalar LDG.E and LDG.E.128.
+
+### Variant 08d (`float8` custom struct, 32-byte aligned)
+
+* [OBS] First `LDG.E.ENL2.256` observation. 256-bit transfer, 8 consecutive registers named via 2 base registers in the encoding.
+* [OBS] `STG.E.ENL2.256` mirrors the load pattern for stores.
+
+### Variant 08e (`float16` custom struct, 64-byte aligned)
+
+* [OBS] 256 bits is the cap. 64-byte data produces 2 × LDG.E.ENL2.256 per array, not a hypothetical 512-bit instruction.
+* [OBS] Address is computed once per array with IMAD.WIDE; the second half is addressed via immediate offset `+0x20` on the second LDG.
+
+### Variant 08f (deprecated `double4`, 16-byte aligned)
+
+* [OBS] 4 × LDG.E.128 emitted instead of 2 × LDG.E.ENL2.256, despite the same 32-byte total size as float8.
+* [OBS] DADD compute shows consistent NOP padding (4 NOPs between each DADD).
+* [OBS] Compiler warning: `double4` is deprecated, use `double4_16a` or `double4_32a`.
+
+### Variant 08g (`double4_32a`)
+
+* [RES] The limitation in 08f was **alignment**, not element size. **Confirmed.** With 32-byte alignment, ptxas emits `LDG.E.ENL2.256` exactly as for `float8`.
+* [OBS] The width rule is: ptxas uses the widest LDG whose byte width does not exceed the alignment guarantee of the source type.
+* [OBS] DADD still shows 3 to 4 NOP padding. FP64 pipeline latency is independent of the memory path used to feed it.
+
+### Resolved hypotheses
+
+* [RES] SM120 LDG width caps at 256 bits. **Confirmed** by float16 splitting into 2 × 256-bit loads.
+* [RES] Auto-vectorization does not happen in ptxas for SM120. **Confirmed** by 08b (scalar float pointer with aligned contiguous access).
+* [RES] Vector arithmetic is scalar at SASS. **Confirmed** by every variant in this chapter.
+* [RES] Alignment of the source type determines usable LDG width. **Confirmed** by the double4 versus double4_32a comparison.
+
+### Open hypotheses
+
+* [HYP] Semantics of `.ENL2` beyond register encoding. Does it also change memory access behavior (latency, cache policy, memory order)? To microbenchmark.
+* [HYP] Whether `LDG.E.ENL4.512` or wider modes exist. Not observed with float16. A `float16_64a` or similar 64-byte aligned struct might trigger it, if it exists.
+* [HYP] Exact FP32 to FP64 ratio on SM120. NOP pattern between DADDs is consistent with the documented 64:1 consumer ratio but not a direct measurement.
+* [HYP] `__restrict__` effect on auto-vectorization in scalar kernels. Not tested.
+* [HYP] Whether `.ENL2.256` exists on SM89 and SM80, or whether those architectures cap LDG width at 128 bits. To verify by cross compiling.
 
 ---
 
@@ -234,13 +340,14 @@ Three optimization strategies derived from the FFMA immediate slot rule:
 | Pipeline | Instructions observed |
 |---|---|
 | FMA | FFMA, FADD, FMUL, IMAD, HFMA2 |
-| ALU | ISETP, FSETP, MOV, LEA, LOP3, FSEL |
-| LSU | LDG, STG, LDS, STS |
+| ALU | ISETP, FSETP, MOV, LEA, LOP3, FSEL, SHF |
+| LSU | LDG, LDG.E.64, LDG.E.128, LDG.E.ENL2.256, STG, STG.E.64, STG.E.128, STG.E.ENL2.256, LDS, STS |
 | ADU | LDC, S2R, BAR.SYNC |
 | DCC | LDCU |
 | UNIFORM | S2UR, UMOV, ULEA, UIADD3, UISETP, UPLOP3, ULOP3 |
 | XU | MUFU.RCP, I2F, F2I (first observed in kernel 06 modulo helper) |
 | CBU | EXIT, BRA, CALL, RET |
+| FP64 | DADD (first observed in kernel 08f) |
 
 ### Cross cutting observations
 
