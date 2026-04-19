@@ -57,6 +57,29 @@ Net effect: one additional arithmetic operation, zero additional register pressu
 
 This is a general pattern: ptxas tracks register liveness precisely and reuses dead registers whenever possible, regardless of their original semantic purpose.
 
+### Liveness analysis is global, not local
+
+The mechanism underlying the register recycling deserves explicit statement. Ptxas does not apply register renaming one instruction at a time. It performs a global liveness pass over the entire kernel: for each register, it computes the range of instructions where the register's value is needed, and allocates physical registers to minimize overlap.
+
+At the moment of the first FADD in kernel 02, the liveness analysis has already determined that:
+- R0's semantic role (threadIdx.x) ended at 0x50 when IMAD consumed it.
+- R0 is free from 0x50 onwards until something else reuses it.
+- No subsequent instruction reads R0 as threadIdx.x again.
+
+Therefore R0 is a valid target for the first FADD. This is a **global** decision, not a local peephole transformation. The consequence is that when diffing two related kernels, register renames may appear in sections of the code where nothing else changed, as a ripple effect of a source change elsewhere.
+
+### Delta of one instruction is exact
+
+Kernel 02 has 21 useful instructions, kernel 01 has 20. The delta is exactly +1 for exactly one extra source-level operation. No hidden overhead, no optimization surprises, no compiler-inserted helpers.
+
+This is a rare case where the source-to-SASS ratio is exactly 1:1 for the change. Most kernels have a larger expansion factor because of the infrastructure amortization (prologue, pointer loads, address arithmetic). Here the change is purely in the compute section, which has no amortized overhead.
+
+### Prologue byte-identity confirms ptxas determinism
+
+The first 17 instructions of kernel 02 have byte-identical opcodes and control codes to kernel 01. Same bit pattern, same stall counts, same scoreboards, same register choices.
+
+This confirms that ptxas is deterministic in the absence of source change: identical source produces identical SASS. The corollary is actionable for diffing: if a prologue byte changes between two kernels whose sources are supposed to be identical, the source has actually changed somewhere. Conversely, prologue byte-identity is a strong confirmation that nothing before the changed section drifted.
+
 ### The "stable infrastructure" observation
 
 Every non-compute instruction is identical between the two kernels. The prologue, bounds check, and memory operations form a stable infrastructure that does not change when the algorithm changes. Only the compute section grows.
@@ -65,11 +88,15 @@ This confirms the method: **controlled variation isolates exactly one pattern at
 
 ## Patterns identified (new)
 
-Two new observations on top of kernel 01:
+Four observations on top of kernel 01:
 
 1. **FMA fusion is strict.** Only `a * b + c` patterns fuse. `a + b + c` produces two separate FADDs.
 
-2. **Dead register recycling.** ptxas reuses registers whose values are no longer live, even across semantic boundaries (threadIdx's R0 becomes an FP scratch register). No pressure increase for additional computation as long as there is dead room in the register file.
+2. **Dead register recycling.** Ptxas reuses registers whose values are no longer live, even across semantic boundaries (threadIdx's R0 becomes an FP scratch register). No pressure increase for additional computation as long as there is dead room in the register file.
+
+3. **Liveness analysis is global.** Register allocation decisions are made over the whole kernel, not locally. A change in one section can ripple to register renames in other sections.
+
+4. **Ptxas is deterministic.** Identical source produces byte-identical SASS. Prologue byte-identity is a reliable signal for diffing.
 
 ## Instruction count breakdown
 
@@ -93,4 +120,5 @@ Same limitations as kernel 01. The minimal delta did not introduce any new infra
 When diffing two SASS dumps:
 - Most instructions will be identical. Focus on what changes.
 - Register renaming may occur even in the identical-looking sections as a consequence of changes elsewhere. Track destinations, not just opcodes.
+- Prologue byte-identity is a diffing tool in its own right: if prologues differ, the source changed somewhere you did not expect.
 - The absence of fusion is as informative as its presence. If you see two arithmetic instructions where you expected one, it usually means the source-level pattern did not match FMA.

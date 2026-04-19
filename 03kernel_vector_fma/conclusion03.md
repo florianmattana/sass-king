@@ -65,7 +65,9 @@ FFMA R11, R2, R5, R7    wait={SB4}
 
 A single instruction computes `R11 = R2 * R5 + R7`. In terms of the source: `d[i] = a[i] * b[i] + c[i]`.
 
-ptxas detected the multiply-add pattern in the source expression and emitted a single fused instruction instead of separate FMUL and FADD. This is in contrast to kernel 02, where `a + b + c` produced two FADDs because it did not match the FMA template.
+Ptxas detected the multiply-add pattern in the source expression and emitted a single fused instruction instead of separate FMUL and FADD. This is in contrast to kernel 02, where `a + b + c` produced two FADDs because it did not match the FMA template.
+
+The operand order of FFMA is `dst, srcA, srcB, srcC` where srcC is the addend. So `FFMA R11, R2, R5, R7` computes `R2 * R5 + R7`, matching the source order `a * b + c`. Same ordering as PTX `fma.f32`.
 
 ### Three loads on one scoreboard
 
@@ -79,15 +81,33 @@ All three global loads share SB4. The FFMA does a single `wait={SB4}` to block u
 
 The SB budget (6 available) is tight when many independent data streams are in flight. Grouping co-consumed producers on one SB frees SBs for other purposes.
 
-### Interleaved address/load scheduling
+### Four LDC with distinct scoreboards, back-to-back issue
 
-ptxas does not emit `LDG LDG LDG` in sequence. Instead it interleaves address computation with load emission:
+The four pointer loads at 0x80 to 0xb0 illustrate the opposite pattern: each pointer load gets its own scoreboard (SB0 through SB3), even though they are all LDCs.
 
 ```
-IMAD.WIDE R2, ... → LDG R2 (a[i])     → fire
-IMAD.WIDE R4, ... → LDG R5 (b[i])     → fire
-IMAD.WIDE R6, ... → LDG R7 (c[i])     → fire
-IMAD.WIDE R8, ...                      // the store address, computed while loads are in flight
+LDC.64    R2, c[0x0][0x380]      SBS=0  stall=1
+LDCU.64   UR4, c[0x0][0x358]     SBS=1  stall=1
+LDC.64    R4, c[0x0][0x388]      SBS=2  stall=1
+LDC.64    R6, c[0x0][0x390]      SBS=3  stall=1
+```
+
+Why distinct scoreboards rather than grouping? The downstream IMAD.WIDE instructions depend on different pointers and can proceed independently. If all four LDCs shared one SB, the first IMAD would wait for all four to complete, losing the parallelism between the independent address computations.
+
+The stall count of 1 on each LDC reflects the fact that constant cache responds fast (unlike global memory). Ptxas does not need to insert larger cadence gaps between LDCs.
+
+Contrast with global loads (LDG), which have larger effective latencies and where scoreboard grouping is the economizing pattern, not the parallelizing pattern.
+
+### Interleaved address/load scheduling
+
+Ptxas does not emit `LDG LDG LDG` in sequence. Instead it interleaves address computation with load emission:
+
+```
+IMAD.WIDE R2, R11, 4, R2     // &a[i]
+LDG.E     R2, ...[R2.64]      SBS=4   → fire a[i]
+IMAD.WIDE R4, R11, 4, R4     // &b[i]
+LDG.E     R5, ...[R4.64]      SBS=4   → fire b[i]  (same SB)
+IMAD.WIDE R6, R11, 4, R6     // &c[i]                (no LDG, this is for the store)
 ```
 
 Four address computations, three loads, and one address for the store, all packed so that the arithmetic is done while the loads are in flight. The FFMA at 0x140 is the first instruction that stalls waiting for data.
@@ -122,13 +142,15 @@ The two mechanisms cover orthogonal cases. Stall count controls the **cadence** 
 
 The instruction `ISETP.GE.AND P0, PT, R11, UR5, PT` has `stall=13`, much larger than the typical 5 for an ALU instruction. Hypothesis: the predicate produced by ISETP must be transferred across pipelines to the CBU (control branch unit) to feed the `@P0 EXIT` that follows. This cross-pipeline transfer adds latency.
 
+This exact stall=13 pattern recurs in every subsequent kernel's bounds check. It is not an isolated anomaly but a universal signature of "predicate producer feeding a predicate consumer on a different pipeline".
+
 To be validated by microbenchmark: measure latency of predicate-producer → predicated-branch-consumer chains versus predicate-producer → arithmetic-consumer chains.
 
 ### Yield flag
 
 Every instruction with `wait={...}` on a scoreboard also has the yield flag set. The scheduler is being told: "if this warp must stall here, let another warp run in the meantime."
 
-Instructions without scoreboard waits do not have yield set, because there is no significant stall expected. The pattern is consistent across all kernels observed so far: **yield flag appears on exactly those instructions where the warp might genuinely wait for a slow operation**.
+Instructions without scoreboard waits do not have yield set, because there is no significant stall expected. The pattern is consistent across all kernels observed so far: **yield flag appears on exactly those instructions where the warp might genuinely wait for a slow operation**. This is a universal rule on SM120.
 
 ## Uniform registers explained
 
@@ -138,7 +160,7 @@ The GPU has two register files, physically separate:
 - Per-thread registers R0-R255, with 32 copies per warp (one per thread), housed in the main register file SRAM
 - Uniform registers UR0-UR63, with 1 copy per warp, housed in a smaller dedicated SRAM with its own datapath
 
-Uniform values (same across all 32 threads) go into UR. ptxas detects uniformity automatically. Typical uniform values:
+Uniform values (same across all 32 threads) go into UR. Ptxas detects uniformity automatically. Typical uniform values:
 - blockIdx.x, blockDim.x, gridDim.x
 - Kernel arguments (pointers and scalars)
 - Constants computed from the above
@@ -170,21 +192,32 @@ Cost: the uniform file is smaller (64 registers on SM80-SM89, expanded to 256 on
 | Exit | 1 | 4% |
 | **Total useful** | **23** | |
 
-Adding one pointer (the `d` array for the store) grew the plumbing by three instructions: LDC for the pointer, IMAD.WIDE for its address, and no change elsewhere. The compute section itself gained zero instructions thanks to FMA fusion.
+### Adding a pointer costs three plumbing instructions
+
+Kernel 01 had three pointers (a, b, c): 20 useful instructions total. Kernel 03 has four pointers (a, b, c, d): 23 useful instructions. Delta = +3 for one additional pointer. The three extra instructions are:
+- One LDC.64 to load the pointer from constant memory.
+- One IMAD.WIDE to compute the per-thread address.
+- Zero in the compute section because FFMA fused the multiply-add into a single instruction.
+
+This is the "pointer tax" rule: each additional array argument costs approximately three SASS instructions of plumbing, independent of how the array is used in compute. Kernels that touch many arrays pay a proportional overhead even if each array is accessed only once.
 
 ## Patterns identified (new)
 
-1. **FMA fusion is active.** The `a*b+c` expression compiles to a single FFMA. Fusion is syntactic: the multiply and the add must be direct operands of each other.
+1. **FMA fusion is active.** The `a*b+c` expression compiles to a single FFMA. Fusion is syntactic: the multiply and the add must be direct operands of each other. FFMA operand order is `dst, a, b, c` with c as the addend.
 
 2. **Scoreboards and stall count are independent mechanisms.** Stall count is for instruction cadence; scoreboards are for data-ready signaling. Variable-latency ops use both; fixed-latency ops use only stall count.
 
 3. **Scoreboard grouping for co-consumed producers.** Multiple LDGs that all feed the same downstream FFMA go onto the same SB so the consumer waits once.
 
-4. **Yield on scoreboard waits.** A consistent rule: any instruction that waits on a scoreboard has the yield flag set to allow the scheduler to switch warps.
+4. **Distinct scoreboards for parallelizable consumers.** Multiple LDCs each feeding their own independent IMAD.WIDE get distinct SBs so the IMADs can proceed in parallel. The grouping vs distinct choice depends on whether the consumers share or not.
 
-5. **Anomalous stall on predicate-to-branch chain.** ISETP feeding `@P EXIT` has a much larger stall than typical ALU ops. Hypothesis: cross-pipeline transfer latency for predicates. To be microbenchmarked.
+5. **Yield on scoreboard waits.** A universal rule on SM120: any instruction that waits on a scoreboard has the yield flag set to allow the scheduler to switch warps.
 
-6. **Register file separation is physical.** Uniform registers live in a distinct SRAM with a separate pipeline, not a mode of the main register file.
+6. **ISETP → @P EXIT signature stall=13.** Recurs in every kernel's bounds check. Cross-pipeline transfer latency. Recognized pattern, not an anomaly.
+
+7. **Pointer tax of three instructions per array argument.** One LDC + one IMAD.WIDE + potentially one more memory op (LDG or STG).
+
+8. **Register file separation is physical.** Uniform registers live in a distinct SRAM with a separate pipeline, not a mode of the main register file.
 
 ## Hypotheses to validate by microbenchmark
 
@@ -192,3 +225,4 @@ Adding one pointer (the `d` array for the store) grew the plumbing by three inst
 - Latency of predicate → arithmetic consumer (expected: lower, to quantify).
 - Throughput of LDG with SB grouping versus separate SBs.
 - Whether the "6 scoreboards per warp" budget is actually 6, or effectively smaller due to hardware constraints.
+- Whether LDCs with distinct SBs really execute in parallel or whether the constant cache serializes them internally.

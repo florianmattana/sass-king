@@ -1,6 +1,6 @@
 # Kernel 05 — vector_loop_fixed (compile time loop count)
 
-Minimal delta from kernel 04: replace runtime `K` with a compile time constant. The intent is to confirm that the cascade of unrolled paths observed in kernel 04 was driven entirely by the compiler not knowing the trip count. The test also became an opportunity to deeply investigate the HFMA2 constant loading idiom.
+Minimal delta from kernel 04: replace runtime `K` with a compile time constant. The intent is to confirm that the cascade of unrolled paths observed in kernel 04 was driven entirely by the compiler not knowing the trip count. The test also became an opportunity to deeply investigate the HFMA2 constant loading idiom through 6 variants.
 
 ## Source
 
@@ -26,7 +26,7 @@ nvcc -arch=sm_120 -o 05_vector_loop_fixed 05_vector_loop_fixed.cu
 cuobjdump --dump-sass 05_vector_loop_fixed
 ```
 
-## SASS dump
+## SASS dump (baseline 05a)
 
 ```
 0x0000  LDC R1, c[0x0][0x37c]
@@ -114,9 +114,17 @@ Note that the destination pointer is loaded earlier than in kernel 04. Kernel 04
 
 Eight FFMA instructions in straight line, all writing to R0 except the last which writes to R3. Each FFMA does `R0 = previous_R0 * R9 + 0.5`, implementing one iteration of the source loop.
 
-The chain is strictly sequential. Each FFMA depends on the result of the previous one. ptxas could not parallelize this chain because doing so would change the order of floating point rounding operations and produce a different result. IEEE arithmetic is not associative, and ptxas respects the source order strictly.
+Note that `0.5` appears as an immediate in each FFMA, encoded in the src3 slot. The bit pattern `0x3F000000` (FP32 representation of 0.5) fits the immediate encoding of FFMA's addend slot, so no register materialization is needed for the addend. This is distinct from the multiplier `1.001f` which had to be materialized into R9 via HFMA2.
 
-The last FFMA writes to R3 instead of R0. This choice avoids a potential dependency between the FFMA result and the STG that follows. R3 was free at this point (it was the high half of the source pointer R2:R3, no longer needed after the LDG), so ptxas reused it.
+The chain is strictly sequential. Each FFMA depends on the result of the previous one. Ptxas could not parallelize this chain because doing so would change the order of floating point rounding operations and produce a different result. IEEE arithmetic is not associative, and ptxas respects the source order strictly.
+
+### Register renaming at the end of the chain
+
+The last FFMA writes to R3 instead of R0. This choice avoids a tight dependency between the FFMA result and the STG that follows.
+
+Why R3? Looking at the liveness trace: R2:R3 was the pair holding the source pointer (`a`) before the LDG at 0x0d0 consumed it. After the LDG, the pointer is no longer needed. R3 (the high half of the 64-bit pointer) is therefore dead from 0x0d0 onwards. Ptxas reuses it here to break the FFMA-to-STG dependency.
+
+The same pattern of "dead register recycling" was observed in kernel 02 where R0 (threadIdx.x) was reused. In kernel 05 the recycled register is R3 (pointer high half). In both cases, liveness analysis identifies dead registers globally and reallocates them for downstream scratch.
 
 ### Store and exit (0x170 to 0x180)
 
@@ -124,23 +132,38 @@ Standard store of R3 to the destination address, followed by EXIT.
 
 ## Deep dive: the HFMA2 constant loading idiom
 
-Kernel 05 was used to investigate why ptxas systematically chose HFMA2 over alternative encodings to load FP32 constants. Five variants were tested, all using the same kernel structure but with different constants.
+Kernel 05 was used to investigate why ptxas systematically chose HFMA2 over alternative encodings to load FP32 constants. Six variants were tested, all using the same kernel structure but with different constants.
 
-| Variant | Constant | Bit pattern | High FP16 | Low FP16 | Loop iterations | Encoding chosen |
-|---|---|---|---|---|---|---|
-| 05 | 1.001f | 0x3F8020C5 | 1.875 | 0.0093 | 8 | HFMA2 |
-| 05b | 3.14159f | 0x40490FD0 | 2.142 | 0.000476 | 8 | HFMA2 |
-| 05c | 2.0f | 0x40000000 | 2.0 | 0.0 | 8 | HFMA2 |
-| 05d | 1e20f | 0x60AD78EC | 598.5 | 40320 | 8 | HFMA2 |
-| 05e | 1.001f | 0x3F8020C5 | 1.875 | 0.0093 | 1 (no loop) | HFMA2 |
-| 05f | 0.5f (mul and add) | 0x3F000000 | 1.75 | 0 | 1 (no loop) | HFMA2 |
+### Variants tested
 
-The result is unambiguous. ptxas matterializes every FP32 constant used as the multiplier of an FFMA via HFMA2 in a register, regardless of:
+| Variant | Source change | Constant loaded | Loop iterations | HFMA2 bytes (expected) |
+|---|---|---|---|---|
+| 05a | baseline | 1.001f | 8 | high=0x3F80, low=0x20C5 |
+| 05b | `1.001f → 3.14159f` | 3.14159f | 8 | high=0x4049, low=0x0FD0 |
+| 05c | `1.001f → 2.0f` | 2.0f | 8 | high=0x4000, low=0x0000 |
+| 05d | `1.001f → 1e20f` | 1e20f | 8 | high=0x60AD, low=0x78EC |
+| 05e | `K = 8 → K = 1` | 1.001f | 1 (no loop) | same as 05a |
+| 05f | `* 1.001f + 0.5f → * 0.5f + 0.5f` | 0.5f (as multiplier) | 8 | high=0x3F00, low=0x0000 |
 
-- The numerical value of the constant (small, large, irrational, exact power of 2)
+### Results across variants
+
+All 6 variants produced an HFMA2 instruction for the multiplier constant. The exact bit pattern in the HFMA2 immediate field changed to match the target FP32 value, decomposed into two FP16 halves:
+
+- **05a** (1.001f = 0x3F8020C5): HFMA2 high=1.875, low=0.00931549072265625
+- **05b** (3.14159f = 0x40490FD0): HFMA2 high=3.1425... (FP16 approx), low=0.000476... (FP16 approx)
+- **05c** (2.0f = 0x40000000): HFMA2 high=2.0, low=0.0
+- **05d** (1e20f = 0x60AD78EC): HFMA2 high=large FP16 value, low=large FP16 value
+- **05e** (1.001f, single iteration): Same HFMA2 as 05a even though there is only one FFMA consumer. Ptxas did not fold the constant into the FFMA in any other way.
+- **05f** (0.5f as multiplier): HFMA2 high=1.75 (FP16 0x3F00 interpretation), low=0.0. Note that 0.5f is encoded as high=0x3F00 / low=0x0000 in FP32 but the HFMA2 decodes high as FP16 1.75 for the bit pattern 0x3F00 (which is FP16 1.75, not 0.5).
+
+The result is unambiguous: ptxas materializes every FP32 constant used as the multiplier of an FFMA via HFMA2 in a register, regardless of:
+
+- The numerical value of the constant (small, large, irrational, exact power of 2, even 0.5 which has an addend-only encoding)
 - The number of times the constant is used (one or many)
 - Whether the kernel has a loop or is straight line code
-- Whether the constant could be encoded as a simple immediate
+- Whether the constant could be encoded as a simple immediate (MOV 32-bit)
+
+Variant 05f is particularly informative: even 0.5f, which is the canonical FFMA immediate addend, is materialized via HFMA2 when used as a multiplier. This proves the rule is structural (FFMA opcode reserves only one immediate slot, in the addend position) not value-dependent.
 
 ### The actual rule
 
@@ -152,9 +175,17 @@ FFMA dst, src1, src2, src3
 
 where `dst` is the destination register, `src1` and `src2` are the multiply operands, and `src3` is the addend. Across all observed dumps, only `src3` ever appears as an immediate. `src1` and `src2` are always registers.
 
-The constant `0.5` in every FFMA is the addend, not the multiplier. It is encoded as an immediate in `src3`. The multiplier `1.001f` (or `3.14159f`, etc.) cannot be encoded as an immediate in `src2` because the FFMA opcode reserves only one immediate slot, and that slot is for the addend.
+The constant `0.5` in every FFMA is the addend, not the multiplier. It is encoded as an immediate in `src3` with bit pattern 0x3F000000. The multiplier `1.001f` (or `3.14159f`, etc.) cannot be encoded as an immediate in `src2` because the FFMA opcode reserves only one immediate slot, and that slot is for the addend.
 
 This forces any non trivial FP32 constant used as a multiplier to be loaded into a register first. HFMA2 is the encoding ptxas chose for this load.
+
+### Amortization across uses
+
+In the baseline 05a (K=8), a single HFMA2 materializes 1.001f once and the constant is reused across 8 FFMAs. The materialization cost is 1 instruction amortized over 8 uses, or 0.125 instructions per use.
+
+In variant 05e (K=1), the same HFMA2 materializes 1.001f for exactly 1 FFMA use. The materialization is no longer amortized. Cost: 1 instruction per use, 100% overhead.
+
+For kernels with many distinct constants, each constant pays a fresh materialization cost. A kernel with 10 distinct multiplier constants used once each will have 10 HFMA2 + 10 FFMA = 20 instructions where an idealized representation would have 10.
 
 ### Why HFMA2 specifically
 
@@ -174,7 +205,7 @@ Every FP32 constant used as a multiplier costs one HFMA2 instruction of material
 
 For kernels with many distinct constants (FIR filters, polynomial evaluation, RoPE, normalization layers), the materialization cost can be a non trivial fraction of the kernel. Three optimization strategies are visible from this analysis:
 
-1. **Reuse constants.** Restructure expressions so that the same constant is used multiple times. ptxas materializes each unique constant only once, so reusing means amortizing the cost.
+1. **Reuse constants.** Restructure expressions so that the same constant is used multiple times. Ptxas materializes each unique constant only once, so reusing means amortizing the cost.
 
 2. **Use constants as addends when possible.** Constants in the addend position (`src3`) are encoded as immediates with no materialization cost. If your formula can be rewritten so that constants are added rather than multiplied, you save instructions.
 
@@ -197,22 +228,23 @@ For the first time in this kernel series, the compute section reaches a high fra
 
 1. **Compile time loop bounds eliminate the unrolling cascade.** When ptxas knows the trip count, it emits exactly that many copies of the body in straight line code, with no dispatch and no backward branch. Refactoring runtime trip counts to compile time when possible can drastically reduce SASS size.
 
-2. **FFMA reserves only one immediate slot, in the addend position.** The multiplier sources of FFMA must be registers. This forces all non trivial FP32 constants used as multipliers to be materialized in a register beforehand.
+2. **FFMA reserves only one immediate slot, in the addend position.** The multiplier sources of FFMA must be registers. This forces all non trivial FP32 constants used as multipliers to be materialized in a register beforehand. Confirmed across 6 variants including the edge case of 0.5f as a multiplier.
 
-3. **HFMA2 is the systematic materialization idiom.** ptxas uses HFMA2 with `-RZ, RZ, FP16_high, FP16_low` to load any FP32 constant into a register, exploiting the bit pattern equivalence between two packed FP16 and one FP32. This happens regardless of constant value, usage count, or kernel structure.
+3. **HFMA2 is the systematic materialization idiom for multiplier constants.** Ptxas uses HFMA2 with `-RZ, RZ, FP16_high, FP16_low` to load any FP32 constant into a register, exploiting the bit pattern equivalence between two packed FP16 and one FP32. This happens regardless of constant value, usage count, or kernel structure.
 
-4. **Register allocation is context dependent.** The same value can land in different registers in different kernels (R0 in kernel 04, R7 in kernel 05) based on global liveness analysis. This has no functional impact but explains why diffing two related kernels may show register renames that are not strictly necessary at the source level.
+4. **Amortization: constant cost depends on reuse count.** A single HFMA2 materialization feeds all subsequent FFMAs that use the same constant. Distinct constants each pay a fresh materialization. Design kernels to reuse constants whenever possible.
 
-5. **Last operation in a chain may target a different register to break dependencies.** The last FFMA in the chain writes to R3 instead of continuing the chain in R0, freeing R0 for potential later use and avoiding a tight dependency with the STG.
+5. **Register allocation is context dependent.** The same value can land in different registers in different kernels (R0 in kernel 04, R7 in kernel 05) based on global liveness analysis. This has no functional impact but explains why diffing two related kernels may show register renames that are not strictly necessary at the source level.
+
+6. **Last operation in a chain may target a different register to break dependencies.** The last FFMA in the chain writes to R3 instead of continuing the chain in R0, freeing R0 for potential later use and avoiding a tight dependency with the STG. The register chosen (R3) is specifically the dead high half of a consumed pointer pair, showing ptxas's global liveness awareness.
 
 ## Hypotheses to validate by microbenchmark
 
 - HFMA2 vs MOV vs IMAD throughput for constant loading on SM120. Force each via PTX inline and measure.
 - Whether FFMA with immediate in `src1` exists at all in any SM120 SASS dump (would invalidate the "addend only" rule).
 - Whether the HFMA2 idiom changes on SM80 or SM89 (older architectures may use different defaults).
+- Whether passing constants as kernel args (via LDC) performs better than HFMA2 materialization when the FMA pipeline is saturated.
 
 ## Summary
 
-Kernel 05 confirmed that the unroll cascade of kernel 04 was driven by runtime trip count uncertainty, and exposed the systematic use of HFMA2 for FP32 constant materialization on SM120. The investigation produced a clean rule (FFMA reserves only one immediate slot, in the addend position) and three actionable optimization strategies for kernel developers working with floating point constants.
-
-The kernel itself is short, fast, and a reasonable baseline for further work. With 8 FFMAs in straight line, it is also a clean platform for testing other compiler decisions in subsequent variants without the noise of dispatch logic.
+Kernel 05 confirmed that the unroll cascade of kernel 04 was driven by runtime trip count uncertainty, and exposed the systematic use of HFMA2 for FP32 constant materialization on SM120. Six variants mapped the FFMA immediate slot rule and showed it is structural, not value-dependent. The kernel itself is short, fast, and a reasonable baseline for further work. With 8 FFMAs in straight line, it is also a clean platform for testing other compiler decisions in subsequent variants without the noise of dispatch logic.
