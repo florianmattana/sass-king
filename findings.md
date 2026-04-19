@@ -150,7 +150,7 @@ Three optimization strategies derived from the FFMA immediate slot rule:
 
 ### Open hypotheses
 
-* [HYP] Why HFMA2 specifically versus MOV or IMAD for constant materialization. Three candidate reasons (pipeline affinity with consuming FFMAs, compact encoding, hardcoded heuristic), none directly measured.
+* [HYP] Why HFMA2 specifically versus MOV or IMAD for constant materialization. Three candidate reasons (pipeline affinity with consuming FFMAs, compact encoding, hardcoded heuristic), none directly measured. **Chapter 11 evidence**: in kernel 11d (log2f) and 11e (log2f intrinsic), HFMA2 packs two distinct FP16 values `(1.443359375, -0.2030029296875)` into a single register which is then consumed as FP32 by a subsequent polynomial FFMA. This confirms HFMA2 is used beyond the "pipeline affinity" case and extends to "packed constant materialization for polynomial evaluation". The choice of HFMA2 over dual MOV appears to be driven by: (a) encoding one instruction instead of two, (b) the result is a bit-level-precise FP32 that the FFMA consumes directly.
 * [HYP] Whether FFMA with immediate in `src1` or `src2` exists at all in any SM120 SASS dump. Would invalidate the addend only rule.
 * [HYP] Whether the HFMA2 idiom persists on SM80 or SM89. Older architectures may use different defaults.
 
@@ -221,9 +221,9 @@ Three optimization strategies derived from the FFMA immediate slot rule:
 * [HYP] `SR_CgaCtaId` falls back to a default value when the kernel does not declare `__cluster_dims__`. Unverified.
 * [HYP] `.DEFER_BLOCKING` on BAR.SYNC is an SM90+ modifier. To verify by comparing with SM80 or SM89 dumps.
 * [HYP] PRMT with `0x9910` and `0x7710` in the `% 255` function handles byte level manipulation for u16 truncation. Not analyzed.
-* [HYP] `HFMA2 R3, -RZ, RZ, 15, 0` and the subnormal FSETP in the modulo helper handle edge cases of the reciprocal multiplication. Role not fully worked out.
-* [HYP] The return address register choice (R7 in kernel 06, R10 in kernel 06i) depends on caller register pressure at the call site. To test with a caller under low pressure.
-* [HYP] Why the modulo function has a symbolic label (`__cuda_sm20_rem_u16`) in the dump but the division function does not.
+* [HYP→PARTIAL] `HFMA2 R3, -RZ, RZ, 15, 0` and the subnormal FSETP in the modulo helper handle edge cases of the reciprocal multiplication. **Chapter 11 clarifies the FSETP part**: the subnormal handling pattern (`FSETP.GEU + FMUL by 2^24 + post-correction`) is a universal pattern used in every MUFU-based computation (log2f, rsqrt, fdividef). The FSETP in the modulo helper serves the same role: detect subnormal reciprocal estimates that would cause MUFU.RCP to behave poorly. The `HFMA2 R3, -RZ, RZ, 15, 0` role (constant 15 as FP16 bit pattern for some edge case correction) remains unexplained.
+* [RES] The return address register choice depends on caller register pressure at the call site. Observed as R7 in kernel 06, R10 in kernel 06i, **R4 in kernel 11b, R9 in kernel 11h**. Four data points across three different kernels confirm the pattern. The callee reads the return address register as its first meaningful operation and uses it for `RET.REL.NODEC`.
+* [HYP→RES PARTIAL] Why the modulo function has a symbolic label (`__cuda_sm20_rem_u16`) in the dump but the division function does not. **Partially resolved by chapter 11**: on CUDA 13.2, u32+ division and modulo are fully inlined (no external helper, no symbolic label). Only u16 operations retain external named helpers. The question reformulates to: why u16 is externally named while u32+ is inlined. [HYP] The threshold is probably driven by amortization: sub-word operations benefit from sharing a single helper body across call sites, while word+ operations inline efficiently.
 
 ---
 
@@ -480,7 +480,7 @@ Chapter dedicated to the REDUX instruction family: hardware warp reduction added
 * [HYP] `__reduce_add_sync` on unsigned int produces the same SASS as on signed int. Not directly tested (would need a 10i variant).
 * [HYP] Bits 15+16 of control code simultaneously set may correspond to reserved encodings. Not observed.
 * [HYP] Cluster-scope CREDUX (mentioned in the herrmann SASS evolution gist for SM100a) may exist on SM120. Not tested, our kernels do not use clusters.
-* [HYP] Full decomposition rules for "which integer constants are HFMA2-loadable" not formalized. Only 0x00000000 and 0x80000000 observed as HFMA2 targets.
+* [HYP] Full decomposition rules for "which integer constants are HFMA2-loadable" not formalized. **Chapter 11 extends the observed target space**: beyond 0x00000000 and 0x80000000 (integer-as-packed-FP16 loads), we observe HFMA2 loading arbitrary bit patterns that correspond to two valid FP16 constants concatenated (e.g., `HFMA2 R, -RZ, RZ, 1.443359375, -0.2030029296875` in log2f). The target space is: any 32-bit value whose high 16 bits are a valid FP16 constant that ptxas's constant table knows how to emit, and same for low 16 bits. Targets that cannot be split into two FP16 constants fall back to MOV immediate.
 
 ### Gaps
 
@@ -510,21 +510,229 @@ Chapter dedicated to the REDUX instruction family: hardware warp reduction added
 
 ---
 
+## Kernel 11 slowpath arithmetic (division, math library, hardware MUFU)
+
+### Variants and compilation strategies
+
+* [OBS] 11a `a[i] / d` u32 runtime: fully inline, no CALL. Twenty-one instructions implementing Granlund-Montgomery reciprocal multiplication.
+* [OBS] 11b `a[i] / d` u64 runtime: hybrid. Fast path inline (u32 algorithm operating on 64-bit operands) + slowpath via `CALL.REL.NOINC 0x2e0` to a local subroutine after the main EXIT.
+* [OBS] 11c `a[i] / d` s32 runtime: inline via IABS + unsigned algorithm + LOP3 0x3c sign XOR fix-up.
+* [OBS] 11d `log2f(x)` standard: fully inline polynomial approximation with 10-coefficient Remez approximation evaluated via Horner's method. No CALL, no MUFU.LG2.
+* [OBS] 11e `__log2f(x)` intrinsic: single MUFU.LG2 wrapped with subnormal handling. Four instructions total.
+* [OBS] 11f `expf(x)` standard: inline range reduction + MUFU.EX2 + FMUL. No CALL despite being an IEEE-accurate standard library function.
+* [OBS] 11g `sinf(x)` standard: dual-path. Fast path for `|x| < 105615` uses triple-FFMA range reduction. Slowpath via BRA (not CALL) implements Payne-Hanek reduction with LDG.E.CONSTANT from a 2/π table + FP64 DMUL + F2F.F32.F64.
+* [OBS] 11h `sqrtf(x)` standard: fast path with MUFU.RSQ + 1 Newton-Raphson iteration + CALL.REL.NOINC to local subroutine at 0x1d0 for NaN/Inf/denormal cases.
+* [OBS] 11i `rsqrtf(x)`: single MUFU.RSQ + subnormal handling. Four instructions.
+* [OBS] 11j `__fdividef(a, b)`: MUFU.RCP + FMUL + subnormal handling on both operands.
+
+### Major structural finding
+
+* [OBS] On SM120 with CUDA 13.2, ptxas does NOT emit external named helpers (`__cuda_sm20_div_u32`, `__cuda_sm20_rem_u32`, etc.) for integer division at u32 width or above, nor for any math library function tested. Every operation compiles to one of three shapes: fully inline, inline with local BRA slowpath, or inline with CALL to local subroutine.
+* [OBS] The only externally-named helper observed in the project remains `__cuda_sm20_rem_u16` from chapter 06. This is the u16-specific case; u32 and beyond are inlined.
+* [HYP] This is either a CUDA 13+ inlining threshold change, or external helpers are reserved for sub-word types (u16) where calling overhead amortizes better.
+
+### Integer division inner structure
+
+* [OBS] All three integer division variants (11a u32, 11b u64 fast path, 11c s32) share the same 5-stage Granlund-Montgomery skeleton: UI2F.U32.RP (convert divisor, round +inf) → MUFU.RCP → IADD with magic `0xffffffe` adjustment → F2I.FTZ.U32.TRUNC.NTZ → IMAD.HI.U32 correction chain (one pass for u32, two for u64).
+* [OBS] Double correction pair at the end of u32 division (two successive `ISETP.GE.U32.AND P0/P1 + @P IADD` pairs) handles the case where the reciprocal is underestimated by 1 or 2 units.
+* [OBS] Zero-divisor sentinel via `LOP3.LUT R, RZ, divisor, RZ, 0x33, !PT` returns `~divisor` when divisor is 0 (UB guard, not IEEE-specified).
+* [OBS] Signed division uses LOP3 0x3c (XOR truth table) on the MSBs of dividend and divisor to derive the result sign, which is then applied via `@pred IADD R, -R, RZ`.
+* [HYP] The magic constant `0xffffffe = (2^28 - 2)` tunes F2I rounding behavior to minimize correction passes. Its derivation from algorithmic error analysis is not verified.
+
+### 64-bit arithmetic primitives in slowpath
+
+* [OBS] 11b slowpath uses multi-precision arithmetic: IMAD.WIDE.U32 (32×32→64), IADD3.X (three-input add with carry-in), IADD.X (two-input add with carry-in), IADD.64 (single-operation 64-bit add), ISETP.GE.U64.AND, ISETP.NE.S64.AND, SEL.64.
+* [OBS] The `.X` suffix indicates carry-in from the condition code register (CC). IADD3.X reads CC, IADD3 doesn't.
+* [OBS] The algorithm performs two Newton-Raphson iterations on an initial MUFU.RCP estimate, then computes remainder and quotient correction with multi-precision arithmetic.
+
+### log2f polynomial structure
+
+* [OBS] Range reduction: `IADD R4, R0, -0x3f3504f3` subtracts the bit pattern of `sqrt(2)/2 ≈ 0.7071` from the input's bit representation. This simultaneously extracts the unbiased exponent and shifts the mantissa into `[sqrt(2)/2, sqrt(2)]`.
+* [OBS] Exponent extraction: `LOP3.LUT R7, R4, 0xff800000, RZ, 0xc0, !PT` masks the top 9 bits (sign + exponent). `IADD R4, R0, -R7` isolates the mantissa_scaled. `I2FP.F32.S32 R7, R7` converts the exponent to a float for the final reconstruction.
+* [OBS] Polynomial body: 9 Horner-method FFMA + 2 FMUL + 1 FFMA with the log2(e) scale factor. Coefficients (in order): `-0.16845, 0.17169, -0.17901, 0.20512, -0.24047, 0.28857, -0.36067, 0.48090, -0.72135`, final multiplier `1.44270` = log2(e).
+* [OBS] Edge case handling: `@P0 FFMA R4, R0, +INF, +INF` returns +INF for input > largest normal. `FSEL R5, R4, -INF, P1` returns -INF if input was zero.
+* [OBS] HFMA2 at 0x00c0 packs `(1.44, -0.20)` as FP16 pair into R9 which is then consumed as FP32 in the first polynomial FFMA. [GAP] Why HFMA2 packed loading over MOV immediate is used remains unclear.
+
+### expf range reduction structure
+
+* [OBS] Decomposition: `exp(x) = 2^(x * log2(e)) = 2^(k + f) = 2^k * 2^f` where k is integer, f is fractional.
+* [OBS] Magic number `12582913 = 0x00C00001` combined with `FFMA.RM` (round toward -inf) implements the classic "magic number" trick to extract the integer part of a float via controlled overflow.
+* [OBS] `0x437c0000 = 252.0` is used as an intermediate scale factor.
+* [OBS] Dual FFMA with coefficients `1.4426950216293334961` and `1.925963033500011079e-08` implements extended-precision multiplication by log2(e), giving ~50 bits of effective precision on the product.
+* [OBS] After computing the fractional residual, `SHF.L.U32 R0, R0, 0x17, RZ` shifts the integer part into the FP32 exponent position (shift by 23). MUFU.EX2 handles the fractional part. Final `FMUL R5, R0, R9` combines them.
+* [HYP] These magic constants match glibc expf patterns; verification against CUDA-specific documentation left as [GAP].
+
+### Payne-Hanek range reduction for sinf
+
+* [OBS] Triggered when `|x| >= 105615 ≈ 2^17`. For smaller inputs, triple-FFMA range reduction with coefficients of π/2 (at progressively smaller orders of magnitude) is sufficient.
+* [OBS] The slowpath loads a 2/π table from constant memory (`LDCU.64 UR4, c[0x4][URZ]`) and iterates 6 times (counter UR4 from 0 to 6 via UIADD3).
+* [OBS] Each iteration: LDG.E.CONSTANT loads 32 bits of the 2/π table, IMAD.WIDE.U32 accumulates partial products, predicate-gated MOV distributes results into R11..R16.
+* [OBS] Loop uses `BRA.U UP0, <start>` with uniform predicate (loop is warp-uniform).
+* [OBS] After the loop, FP64 DMUL (`UR4 = 0x3bf921fb54442d19 = π/2 in IEEE 754 double`) and F2F.F32.F64 complete the reduction.
+* [OBS] The final polynomial evaluation uses 4 FFMA + FSEL pairs implementing `sin(x) ≈ x + c3*x^3 + c5*x^5 + c7*x^7` with coefficients selected based on quadrant (via R2P and predicate selection).
+* [GAP] Exact per-iteration reconstruction of the Payne-Hanek accumulator from R11..R16 (combining via SHF.L.W.U32.HI at 0x05c0 and 0x05e0) is not fully traced.
+
+### sqrtf Newton-Raphson structure
+
+* [OBS] Fast path: one Newton-Raphson iteration starting from MUFU.RSQ. Sequence: `MUFU.RSQ y0`; `FMUL q0 = x*y0`; `FMUL y0/2`; `FFMA e = x - q0²`; `FFMA sqrt = q0 + e*y0/2`.
+* [OBS] Range test `R4 > 0x727fffff` after `IADD R4, R0, -0xd000000` biases the input such that normal positive finite values fall below the threshold and denormals, NaN, and infinity fall above. Triggers BRA to slowpath.
+* [OBS] Slowpath handles: zero (sqrt(0) = 0), negative (returns 0x7fffffff NaN), NaN (propagates), infinity (returns infinity), denormal (scale by 2^64, compute, rescale by 2^-32).
+* [OBS] Slowpath uses `CALL.REL.NOINC 0x1d0` with return address in R9, and `RET.REL.NODEC R2 0x0` at the slowpath exit.
+
+### Local CALL pattern (both 11b and 11h)
+
+* [OBS] Structure: `BSSY.RECONVERGENT B0, <sync_address>` before divergent region, then `MOV Rn, <return_address>` + `CALL.REL.NOINC <slowpath_address>`, with `BSYNC.RECONVERGENT B0` at reconvergence, then main body completion.
+* [OBS] Slowpath lives in the same `.text` section as the main kernel, placed after the main EXIT, unreachable from normal control flow.
+* [OBS] Return register is chosen per-kernel based on local register pressure: R4 in 11b, R9 in 11h. This is a compiler decision, not an ABI.
+* [OBS] `RET.REL.NODEC R? 0x0` reads the return address from the specified register. The `0x0` is the offset to subtract from the return address; always 0 in our observations.
+
+### Subnormal handling pattern (universal)
+
+* [OBS] Four kernels (11d, 11e, 11i, 11j) share identical subnormal handling skeleton: `FSETP.GEU.AND P0, PT, |R|, 1.175494350822287508e-38, PT` (test against FLT_MIN) → `@!P0 FMUL R, R, 16777216` (scale by 2^24 if subnormal) → `<MUFU or polynomial>` → `@!P0 <correction>` (adjust for the scaling).
+* [OBS] Correction depends on operation: subtract 24 for log2, multiply by 2^12 = 4096 for rsqrt (since sqrt halves the exponent), no correction needed for fdividef (both operands scaled equally).
+* [OBS] `1.175494350822287508e-38` is exactly FLT_MIN, the smallest positive normal FP32.
+
+### New opcodes (29 total)
+
+| Opcode | Where | Semantics |
+|---|---|---|
+| UI2F.U32.RP | 11a, 11b | Uniform u32 to float, round +inf |
+| I2F.RP | 11c | Signed int32 to float, round +inf |
+| I2F.U64.RP | 11b | u64 to float, round +inf |
+| I2F.F64.S64 | 11g | s64 to double |
+| I2FP.F32.S32 | 11d, 11g | s32 to float, FP32 output explicit |
+| F2I.FTZ.U32.TRUNC.NTZ | 11a, 11b | Float to u32, FTZ, truncate, NTZ |
+| F2I.U64.TRUNC | 11b | Float to u64, truncate |
+| F2I.NTZ | 11g | Float to int, non-toward-zero rounding |
+| F2F.F32.F64 | 11g | Double to float narrowing |
+| IABS | 11c | Integer absolute value |
+| FSEL | 11d, 11g, 11h | Float select based on predicate |
+| SEL.64 | 11b | 64-bit select based on predicate |
+| FFMA.SAT | 11f | FFMA with output saturated to [0, 1] |
+| FFMA.RM | 11f | FFMA with round mode toward -inf |
+| FMUL.FTZ | 11h | FMUL with flush-to-zero |
+| FADD.FTZ | 11h | FADD with flush-to-zero |
+| MUFU.LG2 | 11e | Hardware log2 approximation |
+| MUFU.EX2 | 11f | Hardware 2^x approximation |
+| MUFU.RSQ | 11h, 11i | Hardware reciprocal sqrt approximation |
+| R2P | 11g | Register to predicates (unpack bits to P0..P7) |
+| DMUL | 11g | FP64 multiply |
+| IMAD.SHL.U32 | 11g | Integer multiply-add with implicit left shift, unsigned |
+| IMAD.U32 | 11g | Integer multiply-add with explicit u32 semantics |
+| IMAD.WIDE.U32 | 11b | 32×32→64 multiply unsigned explicit |
+| SHF.L.W.U32.HI | 11g | Funnel shift left, with wrap, high half, unsigned |
+| SHF.R.U32.HI | 11g | Funnel shift right, high half, unsigned |
+| SHF.R.S32.HI | 11g | Funnel shift right, high half, signed (arithmetic) |
+| LEA.HI | 11g | High-half LEA, returns top 32 bits of `(src1 << imm) + src2` |
+| IADD3.X | 11b | Three-input add with carry-in |
+| IADD.X | 11b | Two-input add with carry-in |
+| IADD.64 | 11b | 64-bit integer add |
+| ISETP.GE.U64.AND | 11b | 64-bit unsigned compare |
+| ISETP.NE.S64.AND | 11b | 64-bit signed compare |
+| MOV.64 | 11g | 64-bit move (register pair) |
+| UMOV.64 | 11g | Uniform 64-bit move with 64-bit immediate support |
+| BRA.U | 11g | Uniform conditional branch |
+| UISETP.NE.U32.AND | 11g | Uniform integer compare (loop control) |
+| CALL.REL.NOINC | 11b, 11h | Relative call without stack pointer increment |
+| RET.REL.NODEC | 11b, 11h | Relative return without stack pointer decrement |
+| BSSY.RECONVERGENT | 11b, 11g, 11h | Open reconvergence scope |
+| BSYNC.RECONVERGENT | 11b, 11g, 11h | Close reconvergence scope |
+
+### New modifiers
+
+* [OBS] `.FTZ` (flush-to-zero) on FMUL/FADD/FSETP/F2I: subnormals treated as zero for input and output.
+* [OBS] `.SAT` (saturate) on FFMA: result clamped to [0, 1].
+* [OBS] `.RM` (round minus, toward -inf) on FFMA.
+* [OBS] `.RP` (round plus, toward +inf) on I2F/UI2F.
+* [OBS] `.NEU` (not equal unordered) on FSETP.
+* [OBS] `.GTU` (greater than unordered) on FSETP.
+* [OBS] `.NTZ` (non-toward-zero) on F2I: signed zero edge case resolution.
+* [OBS] `.W` (with wrap) on SHF.L: funnel shift behavior.
+* [OBS] `.CONSTANT` on LDG.E: load from constant cache path for read-only global memory access. First observation in project.
+
+### Observations worth flagging
+
+* [OBS] `R2P PR, R3, 0x3` in 11g: copies selected bits of R3 into predicate registers P0..P7. Rare opcode, useful when packed flags need to fan out into multiple predicated paths.
+* [OBS] `.reuse` flag frequency correlates with register pressure: 6 occurrences in 11b, 7 in 11g, zero in simpler kernels (11a, 11c, 11e, 11f, 11i, 11j).
+* [OBS] LDG.E.CONSTANT is distinct from LDC (constant memory bank) and LDCU (uniform constant). Used when a read-only table is stored in global memory but accessed via the constant cache path.
+* [OBS] ISETP with `.S64` and `.U64` variants are first observed in 11b. Same structure as 32-bit variants but operate on register pairs.
+* [OBS] **IABS as a single-instruction absolute value.** Kernel 11c uses `IABS R9, R11` to compute `|divisor|` in one instruction. Avoids the need for an ISETP + @pred IADD pair.
+* [OBS] **SEL.64 assembles multi-precision results.** In 11b at 0x0690, `SEL.64 R2, R2, -0x1, P0` selects between a computed 64-bit quotient and -1 (all-ones 64-bit) based on a predicate. Used as the final assembly step of the u64 division result.
+* [OBS] **LEA.HI emitted in 11g.** `LEA.HI R3, R9, R3, RZ, 0x1` at 0x0690 computes the high 32 bits of `(R9 << 1) + R3`. First observation of LEA.HI in the project; used in Payne-Hanek accumulation.
+* [OBS] **SHF.R.S32.HI for sign-aware shift.** In 11g at 0x0640, `SHF.R.S32.HI R4, RZ, 0x1f, R9` sign-extends the high bit of R9 across all 32 bits of R4 (arithmetic shift right). Used to build a sign mask for later XOR operations. Distinct from SHF.R.U32.HI (logical shift).
+* [OBS] **LOP3.LUT 0xfc is "A OR B" truth table.** In 11b at 0x00e0, `LOP3.LUT R4, R3, UR4, RZ, 0xfc, !PT` computes `R3 | UR4` (OR ignoring the third operand via RZ). Used to test if ANY bit of the u64 divisor's high word is set — if so, fast path is inapplicable and the slowpath CALL is taken.
+* [OBS] **IMAD.U32 with negative immediate.** In 11g at 0x03b0, `IMAD.U32 R9, R6, -0x4, RZ` computes `R9 = R6 * -4 + 0`. The `.U32` variant is distinct from `.SHL.U32` — here the immediate is an arbitrary 32-bit value treated as the lower multiplier, not as a shift count.
+* [OBS] **`.FTZ` ubiquitous in sqrtf slowpath.** Every FP instruction in the 11h slowpath (0x01d0-0x02f0) uses `.FTZ`: FMUL.FTZ, FADD.FTZ, FSETP.GEU.FTZ, FSETP.GTU.FTZ, FSETP.NEU.FTZ. This pattern isolates the subnormal handling logic from unexpected subnormal behavior in intermediate computations. [HYP] IEEE-precise sqrt may require explicit FTZ semantics for correct edge case handling.
+* [OBS] **NaN propagation via FADD + 1.** In 11h slowpath at 0x0240, `@P0 FADD.FTZ R2, R0, 1` propagates NaN (the result of NaN + anything is NaN). Idiomatic way to copy a NaN while ensuring the result is a canonical NaN.
+* [OBS] **FSEL with negation pattern for sign flipping.** In 11g at 0x0770, `FSEL R6, -R4, R4, !P1` selects between `-R4` and `R4` based on P1. Conditionally negates a value in one instruction without needing FADD.
+* [OBS] **UMOV.64 with 64-bit immediate.** In 11g at 0x0630, `UMOV.64 UR4, 0x3bf921fb54442d19` loads the 64-bit FP64 representation of π/2 into a uniform register pair. First observation of a 64-bit immediate load in the project.
+* [OBS] **Integer-bit-pattern FP32 constants via MOV.** In 11g at 0x07d0-0x07f0, `MOV R10, 0x3d2aaabb` and `MOV R9, 0x3effffff` load FP32 constants by their bit pattern as 32-bit integers. Values `0x3d2aaabb ≈ 0.04166` and `0x3effffff ≈ 0.5` are polynomial coefficients for the sin series.
+* [OBS] **FFMA/FSEL accept +INF and -INF as immediates.** In 11d at 0x0280, `@P0 FFMA R4, R0, R7, +INF` uses +INF directly as the addend. In 11d at 0x0290, `FSEL R5, R4, -INF, P1` uses -INF as a selectable operand. These FP edge values are immediate-encodable in the instruction.
+* [OBS] **FADD with large negative integer immediate.** In 11f at 0x0100, `FADD R5, R0, -12583039` uses `-12583039` which when interpreted as FP32 bit pattern is a specific float value used in the expf magic-number trick. Not an integer; the SASS disassembler shows the integer form but ptxas encoded an FP32 value.
+* [OBS] **NOP padding around DMUL confirms FP64 throughput restriction.** In 11g at 0x06e0-0x0760, the DMUL at 0x0710 is surrounded by 4 NOPs before and 4 NOPs after. Consistent with the FP64 consumer-part throughput restriction first observed in kernel 08f. Confirms that FP64 operations on SM120 cannot issue back-to-back with normal arithmetic.
+* [OBS] **Constant 0x3bf921fb54442d19 = π/2 in IEEE 754 FP64.** Loaded via UMOV.64 and consumed by DMUL. Standard mathematical constant, confirmed against IEEE 754 encoding.
+* [OBS] **Constant 0x3f3504f3 = sqrt(2)/2 in IEEE 754 FP32.** Used as subtraction constant in log2f range reduction. Subtracting this bit pattern from an FP32 value shifts the mantissa by one binade and prepares the polynomial evaluation interval.
+* [OBS] **Constant 2.3283064365386962891e-10 = 2^-32.** Used in 11h slowpath to rescale the sqrt result after the 2^64 input scaling (since sqrt(2^64) = 2^32, to undo the scaling we multiply by 2^-32).
+* [OBS] **Constant 1.84467440737095516160e+19 = 2^64.** Used in 11h slowpath as the scale factor to bring denormal inputs into the normal range before MUFU.RSQ.
+* [OBS] **Constant 0x727fffff is the exponent threshold for sqrtf fast path.** Inputs with biased exponent > 0xe4 (after the -0xd000000 shift) fall into the slowpath. Catches denormals, very-small-positive, very-large-positive, NaN, and Inf.
+* [OBS] **Absolute value operand on FSETP.** In 11g at 0x00e0 and several other places, `FSETP.GE.AND P0, PT, |R0|, 105615, PT` takes the absolute value of R0 at read time. No separate IABS or FADD needed.
+
+### Constants catalog (magic numbers observed)
+
+Numerical constants appearing as SASS immediates in this chapter, with their mathematical meaning:
+
+| Value (hex) | Value (decimal / interpretation) | Used in |
+|---|---|---|
+| `0xffffffe` | `2^28 - 2` | Granlund-Montgomery reciprocal adjustment |
+| `0x3f3504f3` | `sqrt(2)/2` as FP32 bit pattern | log2f range reduction |
+| `0x437c0000` | `252.0` as FP32 | expf scale factor |
+| `12582913` = `0x00C00001` | Magic integer extraction constant | expf FFMA.RM |
+| `-12583039` | FP32 bit pattern for residual | expf fractional extraction |
+| `16777216` = `0x4B800000` | `2^24` as FP32 | Subnormal scale factor |
+| `4096` = `0x45800000` | `2^12` as FP32 | Subnormal rsqrt correction |
+| `1.84467440737095516160e+19` | `2^64` | sqrtf denormal scale |
+| `2.3283064365386962891e-10` | `2^-32` | sqrtf post-scale correction |
+| `1.4426950216293334961` | `log2(e)` high precision | expf, log2f |
+| `1.925963033500011079e-08` | `log2(e)` low bits | expf extended precision |
+| `0.63661974668502807617` | `2/π` | sinf range reduction rough |
+| `-1.5707962512969970703` | `-π/2` high bits | sinf range reduction |
+| `-7.5497894158615963534e-08` | `-π/2` middle bits | sinf range reduction |
+| `-5.3903029534742383927e-15` | `-π/2` low bits | sinf range reduction |
+| `0x3bf921fb54442d19` | `π/2` as FP64 bit pattern | sinf Payne-Hanek |
+| `105615` | `≈ 2^17` threshold | sinf fast-path range boundary |
+| `0x727fffff` | Biased exponent threshold | sqrtf fast-path range test |
+| `0xd000000` | FP32 bias shift | sqrtf input biasing |
+| `0x7f800000` | `+INF` bit pattern | log2f +INF return |
+| `0x7fffffff` | NaN bit pattern (all 1s significand) | sqrtf NaN return |
+| `0xff800000` | `-INF` / exponent mask | log2f exponent extraction |
+| `1.175494350822287508e-38` | `FLT_MIN` | Universal subnormal threshold |
+| `0x80000000` | INT_MIN / negative zero FP | Sign mask, REDUX MAX.S32 identity |
+
+### Open questions
+
+* [HYP] Does compiling chapter 11 on CUDA 11 or 12 produce `__cuda_sm20_div_u32` helpers? Would confirm compiler change.
+* [HYP] Do chapter 06 u16 modulo helpers still inline under CUDA 13, or is u16 the threshold below which external helpers persist?
+* [HYP] Is there a source-level complexity threshold above which ptxas falls back to external helpers?
+* [HYP] For sinf large-argument, is the Payne-Hanek table accessed via constant memory (`c[0x4][URZ]`) or global memory (LDG.E.CONSTANT)? Both appear in 11g; need clarification of their respective roles.
+* [HYP] Precision difference between `__fdividef` (11j) and `a/b` not measured at SASS level; both compile to MUFU.RCP + FMUL + subnormal handling. Is the C-level difference only at the compiler front end?
+
+---
+
 ## Cross chapter summary
 
 ### Pipelines observed so far
 
 | Pipeline | Instructions observed |
 |---|---|
-| FMA | FFMA, FADD, FMUL, IMAD, HFMA2 |
-| ALU | ISETP, FSETP, MOV, LEA, LOP3, FSEL, SHF, SEL |
-| LSU | LDG, LDG.E.64, LDG.E.128, LDG.E.ENL2.256, STG, STG.E.64, STG.E.128, STG.E.ENL2.256, LDS, STS, SHFL.BFLY, SHFL.IDX, SHFL.UP, SHFL.DOWN, MATCH.ANY, MATCH.ALL |
-| ADU | LDC, S2R, BAR.SYNC |
-| DCC | LDCU |
-| UNIFORM | S2UR, UMOV, ULEA, UIADD3, UISETP, UPLOP3, ULOP3 |
-| XU | MUFU.RCP, I2F, F2I (first observed in kernel 06 modulo helper) |
-| CBU | EXIT, BRA, CALL, RET, BSSY, BSYNC |
-| FP64 | DADD (first observed in kernel 08f) |
+| FMA | FFMA, FFMA.SAT, FFMA.RM, FADD, FADD.FTZ, FMUL, FMUL.FTZ, IMAD, IMAD.U32, IMAD.WIDE, IMAD.WIDE.U32, IMAD.HI.U32, IMAD.SHL.U32, HFMA2 |
+| ALU | ISETP, ISETP.GE.U64.AND, ISETP.NE.S64.AND, FSETP, FSETP.GEU, FSETP.NEU, FSETP.GTU, FSETP.GEU.FTZ, FSETP.GTU.FTZ, FSETP.NEU.FTZ, MOV, MOV.64, LEA, LEA.HI, LOP3, FSEL, SHF, SHF.L.W.U32.HI, SHF.R.U32.HI, SHF.R.S32.HI, SEL, SEL.64, IABS, IADD, IADD.X, IADD3, IADD3.X, IADD.64, R2P |
+| LSU | LDG, LDG.E.64, LDG.E.128, LDG.E.ENL2.256, LDG.E.CONSTANT, STG, STG.E.64, STG.E.128, STG.E.ENL2.256, LDS, STS, SHFL.BFLY, SHFL.IDX, SHFL.UP, SHFL.DOWN, MATCH.ANY, MATCH.ALL |
+| ADU | LDC, LDC.64, S2R, BAR.SYNC |
+| DCC | LDCU, LDCU.64 |
+| UNIFORM | S2UR, UMOV, UMOV.64, ULEA, UIADD3, UISETP, UISETP.NE.U32.AND, UPLOP3, ULOP3 |
+| XU | MUFU.RCP, MUFU.LG2, MUFU.EX2, MUFU.RSQ, I2F, I2F.F64.S64, I2F.U64.RP, I2F.RP, I2FP.F32.S32, UI2F.U32.RP, F2I, F2I.FTZ.U32.TRUNC.NTZ, F2I.U64.TRUNC, F2I.NTZ, F2F.F32.F64 |
+| CBU | EXIT, BRA, BRA.U, CALL, CALL.REL.NOINC, RET.REL.NODEC, BSSY, BSSY.RECONVERGENT, BSYNC, BSYNC.RECONVERGENT |
+| FP64 | DADD (first observed in kernel 08f), DMUL (observed in kernel 11g) |
 | VOTE | VOTE.ANY, VOTE.ALL |
 | REDUX | REDUX, REDUX.OR, REDUX.XOR, REDUX.SUM, REDUX.MIN, REDUX.MAX |
 
@@ -544,6 +752,7 @@ Rules that hold across every SM120 dump we have examined. These are reliable eno
 * ptxas emits a BRA-to-self after the final EXIT as a safety trap. Never reached by a correct control path.
 * **Ptxas is deterministic.** Identical source produces byte-identical SASS. Prologue byte-identity between two kernels is a reliable signal that their prologues have not drifted. Conversely, if prologue bytes differ when they should not, the source changed somewhere the reader did not expect.
 * **Register allocation is global.** Ptxas performs liveness analysis over the entire kernel, not locally. Dead registers are recycled across semantic boundaries (threadIdx's R0 becomes an FP scratch register in kernel 02, pointer high half R3 becomes an FFMA target in kernel 05). A source change in one section can cause register renames in another section as a ripple effect of the global pass.
+* **Ptxas prefers inlining over external helpers on SM120 / CUDA 13.2.** Integer division at u32 width and above, math library functions (log2f, expf, sinf, sqrtf), and all intrinsics are inlined rather than compiled to calls of named external helpers. The only externally-named helper observed is `__cuda_sm20_rem_u16` (sub-word modulo). For operations with a rare slowpath (sqrtf NaN handling, u64 division when high bits are non-zero), ptxas emits a local in-kernel subroutine via CALL.REL.NOINC rather than a separate symbol. Implication for reading production SASS: a long kernel is more likely to be one big inline body than many external calls; search for local BRA and local CALL patterns rather than expecting external symbols.
 
 ### Canonical prologue (every kernel)
 
@@ -634,7 +843,90 @@ HFMA2 R, -RZ, RZ, FP16_high, FP16_low
 
 The bit pattern of R becomes `FP16_high | FP16_low`, interpreted as FP32. Rule: FFMA has one immediate slot (src3, the addend). Multiplier sources must be registers. HFMA2 is the systematic materialization idiom.
 
-Exception: the addend of an FFMA can be an immediate directly (e.g., `FFMA R, R, R, 0.5`).
+**Three variants observed:**
+* **HFMA2 with two distinct FP16 values**: `HFMA2 R, -RZ, RZ, 1.44, -0.20` loads a specific FP32 bit pattern by concatenating the two FP16 halves. Used for polynomial coefficients in log2f (kernel 11d).
+* **HFMA2 with two zero/special values**: `HFMA2 R, -RZ, RZ, 0, 0` loads 0x00000000. `HFMA2 R, -RZ, RZ, -0.0, 0` loads 0x80000000 (INT_MIN / sign bit). Used as identity element for REDUX (kernel 10).
+* **MOV R, 0x<immediate> as fallback**: when the target bit pattern cannot be split into two valid encodable FP16 constants, ptxas falls back to `MOV R, 0x<32-bit>` which is slightly larger encoding but handles arbitrary values. Observed for 0x7FFFFFFF, 0xFFFFFFFF (kernel 10), 0x3d2aaabb, 0x3effffff (kernel 11g sinf coefficients), 0x437c0000 (kernel 11f expf), 0x7f800000 (+INF).
+
+Exception: the addend of an FFMA can be an immediate directly (e.g., `FFMA R, R, R, 0.5`). This includes special values like `+INF` and `-INF` observed in log2f edge case handling.
+
+### Canonical subnormal handling (FP32 MUFU input guard)
+
+Every kernel that uses MUFU.LG2, MUFU.EX2, MUFU.RSQ, or MUFU.RCP on a user-provided FP32 input wraps it with subnormal handling:
+
+```
+FSETP.GEU.AND P0, PT, |R|, 1.175494350822287508e-38, PT  ; test |x| >= FLT_MIN
+@!P0 FMUL R, R, 16777216                                   ; scale by 2^24 if subnormal
+<MUFU operation>
+@!P0 <correction>                                          ; post-correct for the scaling
+```
+
+`1.175494350822287508e-38` is FLT_MIN (smallest positive normal FP32). `16777216 = 2^24 = 0x4B800000`.
+
+Correction depends on the operation:
+* **log2**: `FADD R, R, -24` (subtract 24 from result since `log2(2^24 * x) = log2(x) + 24`)
+* **rsqrt**: `FMUL R, R, 4096` (multiply by `2^12` since rsqrt halves the exponent, correction is `2^(scale/2)`)
+* **fdividef (both operands scaled)**: no correction needed (ratio preserves)
+
+Recognize this pattern when reading any SASS dump that uses MUFU on floats: if MUFU is preceded by `FSETP.GEU` against FLT_MIN and a scale-by-2^24, subnormal handling is active.
+
+### Canonical inline integer division (Granlund-Montgomery reciprocal)
+
+All u32 and u64 (fast path) and s32 integer divisions by a runtime variable on SM120/CUDA 13 compile to the same 5-stage inline pattern:
+
+```
+UI2F.U32.RP UR_or_R, divisor               ; convert divisor to float, round +inf
+MUFU.RCP R, UR_or_R                         ; float reciprocal
+IADD R, R, 0xffffffe                        ; magic adjustment constant
+F2I.FTZ.U32.TRUNC.NTZ R_q, R                ; back to int
+IADD R_neg, RZ, -R_q                        ; prepare error computation
+IMAD R_tmp, R_neg, divisor, RZ              ; error = -quotient * divisor
+IMAD.HI.U32 R_q_corrected, R_q, R_tmp, R_base   ; correction via high-multiply
+IMAD.HI.U32 R_final, R_q_corrected, dividend, RZ  ; final quotient
+IADD R_neg, -R_final, RZ
+IMAD R_r, divisor, R_neg, dividend          ; remainder = dividend - quotient * divisor
+ISETP.GE.U32.AND P0, ..., R_r, divisor, PT  ; double-correction pair
+@P0 IADD R_r, R_r, -divisor
+@P0 IADD R_final, R_final, 0x1
+ISETP.GE.U32.AND P1, ..., R_r, divisor, PT
+@P1 IADD R_final, R_final, 0x1
+@!P_zerodiv LOP3.LUT R_final, RZ, divisor, RZ, 0x33, !PT  ; zero-divisor sentinel
+```
+
+Twenty-one instructions for u32, ~30 for u64 with multi-precision correction, slightly more for s32 with IABS wrapping and LOP3 0x3c sign fix-up.
+
+Recognize: any sequence starting with `UI2F.U32.RP` followed by `MUFU.RCP` and ending with `IMAD.HI.U32` is an inline integer division or modulo.
+
+### Canonical local CALL subroutine (in-kernel slowpath)
+
+Rare slowpaths for operations that are mostly-fast-but-sometimes-complex use a local CALL pattern rather than full inlining or external helpers:
+
+```
+<main kernel body>
+BSSY.RECONVERGENT B0, <sync_address>         ; open reconvergence scope
+<test for slowpath condition>
+@!P BRA <fast_path>                          ; if fast path applicable, skip CALL
+MOV Rn, <return_address>                     ; set up return in arbitrary register
+CALL.REL.NOINC <local_slowpath_addr>         ; call local subroutine
+<return_address>:
+BRA <post>                                   ; skip fast path
+<fast_path>:
+<inline fast path computation>
+<post>:
+BSYNC.RECONVERGENT B0                        ; reconverge
+<main kernel continuation>
+EXIT
+
+<local_slowpath_addr>:
+<handle edge cases / slow algorithm>
+RET.REL.NODEC Rn 0x0                         ; return via Rn
+<safety trap BRA-to-self>
+<NOP padding>
+```
+
+Observed in kernels 11b (u64 division slowpath) and 11h (sqrtf NaN/Inf/denormal slowpath). The return register `Rn` is chosen per-kernel based on local register pressure (R4, R9, and other values observed).
+
+Distinguish from external helper CALL: local CALL targets a hex offset within the kernel, external CALL targets a named symbol like `__cuda_sm20_rem_u16`.
 
 ### Canonical warp reduction (butterfly)
 
@@ -691,15 +983,25 @@ Shared buffers are placed consecutively without automatic padding. Alignment onl
 
 | Source | ptxas strategy |
 |---|---|
-| `%` by runtime variable | CALL `__cuda_sm20_rem_u16` (expensive) |
+| `%` u16 by runtime variable | CALL `__cuda_sm20_rem_u16` (external named helper, sole case observed) |
 | `%` by non-power-of-2 constant | Inline reciprocal multiplication with magic number |
 | `%` by power-of-2 constant | Fused into LEA + LOP3 mask (cheap) |
-| `/` by runtime variable | CALL to division helper |
+| `/` u32 by runtime variable | Inline Granlund-Montgomery reciprocal multiplication (21 instructions) |
+| `/` u64 by runtime variable | Inline u32-fast-path + local CALL to in-kernel subroutine for slowpath |
+| `/` s32 by runtime variable | Inline via IABS + unsigned algorithm + LOP3 0x3c sign fix-up |
 | `/` by power-of-2 constant | SHF.R.U32.HI (shift right) |
 | `*` by power-of-2 constant | SHF.L.U32 (shift left) |
 | `+`, `*+` in FP | FFMA when `a*b+c` pattern present, else separate FMUL / FADD |
 | FP constant as multiplier | HFMA2 materialization into register |
 | FP constant as addend | Immediate in FFMA src3 slot |
+| `log2f(x)` standard | Inline 10-coefficient Remez polynomial + range reduction |
+| `__log2f(x)` intrinsic | Single MUFU.LG2 + subnormal handling (4 instructions) |
+| `expf(x)` standard | Inline range reduction + MUFU.EX2 + FMUL (no CALL) |
+| `sinf(x)` standard | Inline fast path + BRA slowpath with Payne-Hanek for large args |
+| `sqrtf(x)` standard | Fast path MUFU.RSQ + 1 NR iteration + CALL to local slowpath for edge cases |
+| `rsqrtf(x)` | Single MUFU.RSQ + subnormal handling (4 instructions) |
+| `__fdividef(a,b)` | MUFU.RCP + FMUL + subnormal handling |
+| FP subnormal on MUFU input | Pre-scale by 2^24, operate, post-correct (universal pattern) |
 
 ### Scheduling patterns
 
@@ -711,6 +1013,9 @@ ptxas systematically places independent instructions between a producer and its 
 * **Constant materialization (HFMA2) placed at the pipeline choice point.** HFMA2 is used in compute-heavy blocks where the FMA pipeline is loaded, MOV is used otherwise.
 * **VOTE.ANY hoisted to kernel start** when its input is `PT` (as in `__activemask()`). No data dependency, so it can run in parallel with pointer loads.
 * **Counter update interleaved with compute in unrolled loops.** UIADD3 and UISETP for loop control are placed between FFMAs, not at the tail.
+* **Polynomial FFMA chain with `.reuse` on multiplicand.** In Horner-method polynomial evaluation (log2f, sin, etc.), the variable `x` is reused across every FFMA. Ptxas emits `.reuse` on the `x` operand so the hardware caches it in the reuse cache, avoiding register file reads. Recognizable by a long monotonic chain like `FFMA R, R_x.reuse, R_acc, imm1; FFMA R, R_x.reuse, R, imm2; ...` with ~8-12 iterations.
+* **Independent work between REDUX/MUFU/SHFL and their consumer.** Variable-latency producers (REDUX, MUFU, SHFL, LDG) are followed by independent instructions that do not depend on them, hiding the latency. The consumer's scoreboard wait comes last.
+* **LOP3.LUT or ISETP for lane-zero test placed after REDUX.** The lane-zero predicate for conditional store is computed after REDUX issues but before its result is consumed, using REDUX's latency window for useful work.
 
 ### Scoreboard assignment rules
 
@@ -727,7 +1032,9 @@ Observed per-pipeline latency behavior:
 * **LDC stall=1 as cadence.** Constant cache responds fast, so ptxas emits LDCs back-to-back with stall=1, relying on scoreboard grouping or distinct SBs for correctness. LDC latency is short enough that the stall count does not need to be inflated.
 * **LDG requires large effective latency.** Global memory loads have variable latency on the order of hundreds of cycles. ptxas relies on scoreboards entirely, emitting stall=1 or stall=2 on the LDG itself and placing the consumer's wait much later.
 * **ISETP → @P EXIT stall=13 is universal.** The predicate producer for a bounds check always has stall=13 regardless of the surrounding code. Recurs in every kernel. Hypothesis: cross-pipeline transfer from ALU to CBU.
-* **NOP padding between DADDs on FP64.** The FP64 pipeline on consumer SM120 has restricted throughput. Consecutive DADDs show NOP gaps (3-4 NOPs between operations) as an instruction-level manifestation.
+* **NOP padding on FP64 operations.** The FP64 pipeline on consumer SM120 has restricted throughput. Consecutive DADDs (kernel 08f) and isolated DMULs (kernel 11g) both show NOP gaps of 3-4 NOPs around the operation as an instruction-level manifestation. Confirmed across two distinct operations, so this is a pipeline-wide characteristic, not operation-specific.
+* **MUFU variable latency.** MUFU.RCP, MUFU.RSQ, MUFU.LG2, MUFU.EX2 all use scoreboards for synchronization. Consumers wait on the scoreboard, ptxas interleaves unrelated work between producer and consumer. Estimated latency ~20-30 cycles based on the typical distance between MUFU and its consumer in dumps, but not microbenchmarked.
+* **CALL latency.** CALL.REL.NOINC + RET.REL.NODEC adds at least two instructions of overhead (the MOV for return address + the CALL itself, plus the RET). Additional cycles for the jump, not measured.
 
 ### Cost rules (quantified overhead per source feature)
 
@@ -735,16 +1042,44 @@ Quantified overhead per source-level construct, useful for budgeting kernel cost
 
 * **Pointer tax: +3 instructions per array argument.** Each additional pointer in the kernel signature costs approximately three SASS instructions: one LDC.64 to load the pointer from constant memory, one IMAD.WIDE to compute the per-thread address, and potentially one more memory op (LDG or STG) depending on usage. Independent of how the array is consumed by compute.
 * **Constant materialization amortization.** A distinct FP32 multiplier constant costs one HFMA2 materialization. If the constant is used N times, the amortized cost per use is 1/N instructions. Kernels with many distinct multiplier constants (FIR filters, polynomial evaluation) pay the materialization cost for each.
-* **Modulo runtime slowpath: 10-12× vs power-of-2.** A modulo by a runtime variable triggers a CALL to `__cuda_sm20_rem_u16` costing ~40-60 cycles in throughput. A modulo by a power-of-2 constant compiles to 1-2 inline instructions costing ~5 cycles. Differential of roughly 10-12×.
-* **Modulo non-power-of-2 constant: ~10 instructions inline.** Between the two extremes: a constant that is not a power of 2 but is known at compile time compiles to an inline reciprocal multiplication with a magic number, around 10 instructions, 3-4× more expensive than power-of-2 but far cheaper than runtime CALL.
+* **Modulo runtime u16: CALL to external helper.** A modulo by a runtime u16 variable triggers a CALL to `__cuda_sm20_rem_u16` costing ~40-60 cycles in throughput. The only external helper observed in the project.
+* **Modulo non-power-of-2 constant: ~10 instructions inline.** A constant that is not a power of 2 but is known at compile time compiles to an inline reciprocal multiplication with a magic number, around 10 instructions, 3-4× more expensive than power-of-2 but far cheaper than runtime CALL.
+* **Modulo power-of-2 constant: 1-2 instructions.** Fused into LEA + LOP3 mask. Effectively free.
+* **Integer division u32 runtime: 21 instructions inline.** Granlund-Montgomery reciprocal multiplication. No CALL. Roughly 1 MUFU.RCP + 4-5 IMAD chain + correction pair.
+* **Integer division u64 runtime: ~60 instructions (fast path + local CALL slowpath).** Fast path 30+ instructions inline, slowpath CALL adds another 30+ when triggered. Budget worst-case ~60 instructions per division.
+* **Integer division s32 runtime: ~25 instructions inline.** u32 algorithm + IABS wrapping + LOP3 0x3c sign fix-up.
+* **log2f standard: ~15 instructions polynomial + subnormal handling.** 10 FFMA polynomial + 2 FMUL + 1 FFMA with log2(e) + range reduction + edge case handling.
+* **`__log2f` intrinsic: 3-4 instructions.** MUFU.LG2 + subnormal handling only.
+* **expf standard: ~10 instructions.** Range reduction + MUFU.EX2 + FMUL. Much cheaper than log2f standard because it uses MUFU.EX2 directly instead of polynomial.
+* **sinf standard (small args): ~10 instructions fast path.** Triple FFMA range reduction + 4-FFMA polynomial.
+* **sinf standard (large args |x| >= 2^17): ~80+ instructions slowpath.** Payne-Hanek with 6-iteration table loop + FP64 DMUL. Significant cost.
+* **sqrtf standard: 5-6 instructions fast path, ~20 additional if slowpath triggered.** Newton-Raphson 1 iteration on MUFU.RSQ. Slowpath (NaN/Inf/denormal) rare, adds CALL overhead.
+* **rsqrtf: 3-4 instructions.** MUFU.RSQ + subnormal handling only.
+* **`__fdividef`: 3-4 instructions.** MUFU.RCP + FMUL + subnormal handling.
+* **Subnormal handling cost: +3 instructions per MUFU-using kernel.** FSETP.GEU + @!P FMUL scale + @!P correction. Fixed overhead any time MUFU is applied to user FP input.
 
 ### Compiler artifacts to watch for
 
 * **STL / LDL** (not yet observed in our kernels) would indicate register spilling. Signal of a kernel too wide for the register file.
-* **CALL** indicates an out-of-line function: division/modulo slowpath, transcendental math, non-inlined helper.
-* **Kernel size significantly larger than expected** often means cascade unrolling (runtime trip count).
-* **BSSY / BSYNC.RECONVERGENT** wrapping a short section means ptxas detected divergence before a warp-synchronous operation.
+* **CALL.REL.NOINC to a named symbol** indicates an external out-of-line helper. On SM120/CUDA 13, only observed for `__cuda_sm20_rem_u16` and `__cuda_sm20_div_u16` (sub-word integer modulo/division).
+* **CALL.REL.NOINC to a local address** (hex offset within same kernel) indicates an inline-but-out-of-hot-path subroutine. The body is placed after the main EXIT. Used for rare slowpaths (sqrtf NaN handling, u64 division high-bits).
+* **BRA to a forward address within the main body** indicates an inline slowpath that doesn't warrant a subroutine (sinf Payne-Hanek, expf non-fast-path). Control returns naturally via fall-through.
+* **Kernel size significantly larger than expected** often means cascade unrolling (runtime trip count) OR full inlining of math library functions (log2f, sinf).
+* **BSSY / BSYNC.RECONVERGENT** wrapping a short section means ptxas detected divergence before a warp-synchronous operation OR a divergent slowpath.
 * **Consecutive NOPs between arithmetic instructions** mean the pipeline cannot keep up (FP64 on consumer parts, or ILP shortage).
+* **Long chain of FFMA with monotonic `.reuse` pattern** indicates inline polynomial evaluation via Horner's method. Look at the immediate constants to identify which function (log2, sin, cos, exp).
+* **UI2F.U32.RP followed by MUFU.RCP** is the signature of inline integer division/modulo via Granlund-Montgomery.
+* **LDG.E.CONSTANT in a loop with UIADD3 counter** indicates a read-only table access, most likely Payne-Hanek or similar table-based algorithm.
+* **Magic constants to watch for in SASS immediates:**
+  * `0xffffffe` (268435454): IADD adjustment in Granlund-Montgomery reciprocal multiplication
+  * `0x3f3504f3` (sqrt(2)/2 as FP32): log2f range reduction
+  * `0x437c0000` (252.0): expf intermediate scale
+  * `12582913 = 0x00C00001`: expf integer extraction via FFMA.RM
+  * `16777216 = 0x4B800000` (2^24): subnormal handling scale factor
+  * `4096 = 0x45800000` (2^12): subnormal rsqrt correction
+  * `0x7fffffff` (NaN bit pattern): FP32 NaN for edge case returns
+  * `0x7f800000` (+INF bit pattern): FP32 infinity for edge case returns
+  * `0x80000000` (INT_MIN): HFMA2 `-RZ, RZ, -0.0, 0` loads this value
 
 ### Reading control code annotations
 
@@ -789,13 +1124,25 @@ SM120-specific or non-obvious suffixes worth knowing:
 * **`.DEFER_BLOCKING`** (appears on BAR.SYNC): a variant of block-level barrier that allows the warp to defer blocking until necessary. Default form of `__syncthreads()` on SM120.
 * **`.RECONVERGENT`** (appears on BSSY and BSYNC): Independent Thread Scheduling reconvergence scope. Wraps warp-synchronous instructions that follow divergent code.
 * **`.GEU`** (appears on FSETP): greater equal unordered, FP semantics where NaN comparisons return true.
+* **`.NEU`, `.GTU`, `.LTU`, `.EQU`, `.LEU`** (appear on FSETP): unordered variants of the comparison predicates. NaN comparisons return true for the unordered variants.
 * **`.TRUNC.NTZ`** (appears on F2I): truncation with non-toward-zero rounding for negative zero edge case.
+* **`.FTZ`** (appears on FMUL, FADD, FSETP, F2I): flush-to-zero. Subnormals are treated as zero for both input and output. Improves throughput on some paths at the cost of precision for very small values.
+* **`.SAT`** (appears on FFMA): saturate. Output is clamped to [0, 1]. Used for probability-like computations.
+* **`.RM`** (appears on FFMA): round mode toward -inf (round minus). Used in expf for controlled integer extraction via overflow.
+* **`.RP`** (appears on I2F, UI2F): round mode toward +inf (round plus). Used in integer division to guarantee the reciprocal estimate is an overestimate.
+* **`.W`** (appears on SHF.L): with wrap. Changes the shift to a funnel shift (combining two source registers).
+* **`.CONSTANT`** (appears on LDG.E): load via constant cache path for read-only global memory. Benefits from read-only caching behavior. Distinct from LDC (constant memory bank) and LDCU (uniform constant).
+* **`.NOINC`** (appears on CALL.REL): no-increment of the stack pointer. Return address is passed via register.
+* **`.NODEC`** (appears on RET.REL): no-decrement of the stack pointer. Mirror of CALL.REL.NOINC.
 
 Operand-level flags (not opcode suffixes but worth distinguishing):
 
-* **`.reuse`** on a source operand: hint to the hardware to cache that value in the reuse cache.
+* **`.reuse`** on a source operand: hint to the hardware to cache that value in the reuse cache. Frequency correlates with register pressure — dense kernels use `.reuse` more than simple kernels.
 * **`.64`** on a register name (e.g., `R2.64`): treats R2:R3 as a 64-bit register pair.
 * **`.H0`, `.H1`** on a register name: selects the low or high 16 bits of a packed half-precision register.
+* **`|R|`** (absolute value on FSETP, FFMA src, etc.): take absolute value of the operand at read time.
+* **`-R`** (negation on source operand): negate at read time. Combined with `|R|` allows sign manipulation without separate instructions.
+* **`~R`** (bitwise NOT on integer source): complement at read time. Observed in IADD.X for multi-precision arithmetic.
 
 Modifiers we have not yet encountered in our dumps but that appear in the Blackwell ISA reference are not covered here.
 
@@ -804,20 +1151,65 @@ Modifiers we have not yet encountered in our dumps but that appear in the Blackw
 Syntax reminders for the operand orders of opcodes that are easy to misread.
 
 * **FFMA `dst, srcA, srcB, srcC`.** Computes `dst = srcA * srcB + srcC`. srcC is the addend, the only position that can hold an FP32 immediate. srcA and srcB must be registers. Same order as PTX `fma.f32`.
+* **FFMA.SAT `dst, srcA, srcB, srcC`.** Same as FFMA but output is clamped to [0, 1]. Used for probability/fraction computations (observed in expf).
+* **FFMA.RM `dst, srcA, srcB, srcC`.** Same as FFMA but with round mode toward -inf (round minus). Used in expf for controlled integer extraction.
 * **IMAD `dst, srcA, srcB, srcC`.** Computes `dst = srcA * srcB + srcC`. Like FFMA but integer. Ubiquitous in address arithmetic.
 * **IMAD.WIDE `dst, srcA, imm, srcC`.** Computes a 64-bit result `dst = srcA * imm + srcC` where `dst` is a register pair `R:R+1` and srcC is also a pair. The `imm` is typically `sizeof(element)` in bytes. Used for `&array[i]` computation.
-* **LEA `R_dst, R_src1, UR_base, imm`.** Computes `R_dst = (R_src1 << imm) + UR_base`. Mixed per-thread and uniform: per-thread index scaled by shift, added to uniform base. Canonical shared memory address derivation on SM120.
-* **ULEA `UR_dst, UR_src1, UR_src2, imm`.** Uniform LEA: `UR_dst = (UR_src1 << imm) + UR_src2`. Purely uniform, used in shared memory base construction.
+* **IMAD.WIDE.U32 `dst, srcA, srcB, srcC`.** Explicit unsigned 32×32→64 multiply-accumulate. Used for multi-precision arithmetic in u64 division slowpath.
+* **IMAD.HI.U32 `dst, srcA, srcB, srcC`.** Returns the high 32 bits of `srcA * srcB + srcC`. Key primitive in Granlund-Montgomery reciprocal multiplication.
+* **IMAD.SHL.U32 `dst, srcA, imm, srcC`.** Integer multiply-add with explicit left shift. Semantics: `dst = (srcA << log2(imm)) + srcC` when `imm` is a power of 2. Observed in sinf Payne-Hanek preparation.
+* **IABS `dst, src`.** Integer absolute value. Used in signed division via unsigned algorithm.
+* **IADD `dst, srcA, srcB`.** Two-input integer add (no carry-in).
+* **IADD.X `dst, srcA, srcB`.** Two-input add with carry-in from CC. Used in multi-precision arithmetic.
 * **IADD3 `dst, srcA, srcB, srcC`.** Three-input add: `dst = srcA + srcB + srcC`. Common in index arithmetic for loop counters and address computation.
+* **IADD3.X `dst, PT, PT, srcA, srcB, srcC, Px, Py`.** Three-input add with carry-in and predicate-gated output. The `P` operands are carry-chain predicates. Used in multi-precision accumulation.
+* **IADD.64 `dst, srcA, srcB`.** 64-bit integer add (single operation, no carry chain). Operates on register pairs.
 * **UIADD3 `UR_dst, UPsrcA, UPsrcB, UR_1, UR_2, UR_3`.** Uniform three-input add with predicate masks. `UPsrcA` and `UPsrcB` are predicates that can conditionally negate the corresponding addend. Used to flip signs of inputs on the uniform path.
+* **LEA `R_dst, R_src1, UR_base, imm`.** Computes `R_dst = (R_src1 << imm) + UR_base`. Mixed per-thread and uniform: per-thread index scaled by shift, added to uniform base. Canonical shared memory address derivation on SM120.
+* **LEA.HI `R_dst, R_src1, R_src2, R_src3, imm`.** High-half LEA, returns high 32 bits of `(src1 << imm) + src2`.
+* **ULEA `UR_dst, UR_src1, UR_src2, imm`.** Uniform LEA: `UR_dst = (UR_src1 << imm) + UR_src2`. Purely uniform, used in shared memory base construction.
 * **PRMT `R_dst, R_src1, imm, R_src2`.** Byte permutation. Each nibble of the 16-bit immediate selects one byte from the 8 available bytes (4 from src1, 4 from src2) to place at the corresponding destination byte. Used in the integer division helper for byte-level manipulation of the magic number.
-* **LOP3.LUT `R_dst, srcA, srcB, srcC, lut_imm, predicate`.** Applies a 3-input lookup table (256 possible functions) over the three source operands. The `lut_imm` byte encodes the truth table. `0xc0` is the canonical "AND then compare-to-zero" pattern used for lane-zero tests and power-of-2 mask operations.
+* **LOP3.LUT `R_dst, srcA, srcB, srcC, lut_imm, predicate`.** Applies a 3-input lookup table (256 possible functions) over the three source operands. The `lut_imm` byte encodes the truth table. Canonical values:
+  * `0xc0`: `A AND B` (used for lane-zero tests, power-of-2 masks)
+  * `0x33`: `NOT B` (used for zero-divisor sentinel in division)
+  * `0x3c`: `A XOR B` (used for sign fix-up in signed division)
+  * `0xfc`: `A OR B` (used for combining predicate bits)
+* **SHF.L.W.U32.HI `R_dst, R_src1, R_src2, R_src3`.** Funnel shift left with wrap, high half, unsigned. Computes the high 32 bits of `(R_src3 : R_src1) << R_src2`. Used in Payne-Hanek accumulation.
+* **SHF.R.U32.HI `R_dst, R_src1, R_src2, R_src3`.** Funnel shift right, high half, unsigned. Complement of SHF.L.W.U32.HI.
+* **SHF.R.S32.HI `R_dst, R_src1, R_src2, R_src3`.** Same as SHF.R.U32.HI but signed (arithmetic shift right).
+* **FSEL `dst, srcA, srcB, predicate`.** Float select: `dst = srcA` if predicate is true, else `srcB`. The negation `-` can be applied to operands (e.g., `FSEL R, -A, A, !P`).
+* **SEL.64 `dst, srcA, srcB, predicate`.** 64-bit select. Operands are register pairs.
+* **R2P `PR, R_src, imm`.** Register-to-predicates: copies bits of `R_src` into predicate registers P0..P7, with `imm` selecting which bit positions. Rare; used to unpack packed flags.
+* **FSETP.* `Pd, Ps, srcA, srcB, Ps_in`.** Float set predicate. Comparison types: `.GE`, `.LT`, `.EQ`, `.NE`, `.GT`, `.LE` plus unordered variants `.GEU`, `.LTU`, `.EQU`, `.NEU`, `.GTU`, `.LEU` where NaN comparisons return true. The `.FTZ` suffix flushes subnormals to zero for comparison.
+* **ISETP.*.U64 / .S64 `Pd, Ps, srcA, srcB, Ps_in`.** 64-bit integer compare. Operates on register pairs.
+* **UI2F.U32.RP `UR_dst, UR_src`.** Convert uniform u32 to float with round toward +inf. Guarantees the float is ≥ the original integer.
+* **I2F.RP `R_dst, R_src`.** Per-thread signed int32 to float, round toward +inf.
+* **I2F.U64.RP `R_dst, R_src`.** u64 to float, round toward +inf.
+* **I2F.F64.S64 `R_dst, R_src`.** Signed int64 to double (FP64).
+* **I2FP.F32.S32 `R_dst, R_src`.** Signed int32 to float (FP32 output explicit).
+* **F2I.FTZ.U32.TRUNC.NTZ `R_dst, R_src`.** Float to uint32, flush subnormals, truncate, non-toward-zero rounding. The `.NTZ` disambiguates signed zero edge case.
+* **F2I.U64.TRUNC `R_dst, R_src`.** Float to uint64 with truncation.
+* **F2I.NTZ `R_dst, R_src`.** Float to int32 with non-toward-zero rounding.
+* **F2F.F32.F64 `R_dst, R_src`.** Double to float narrowing conversion.
+* **DMUL `R_dst, R_srcA, R_srcB`.** FP64 multiply. Operates on register pairs.
+* **MUFU.LG2 `R_dst, R_src`.** Hardware log2 approximation. Single-cycle throughput on XU pipeline.
+* **MUFU.EX2 `R_dst, R_src`.** Hardware 2^x approximation.
+* **MUFU.RSQ `R_dst, R_src`.** Hardware reciprocal sqrt approximation.
+* **MUFU.RCP `R_dst, R_src`.** Hardware reciprocal approximation (previously seen in chapter 06).
+* **CALL.REL.NOINC `<target>`.** Relative call, no increment of stack pointer. Return address is set via `MOV Rn, <return_addr>` beforehand.
+* **RET.REL.NODEC `Rn`, `<offset>`.** Relative return, no decrement of stack pointer. Return address comes from Rn plus offset.
+* **BSSY.RECONVERGENT `Bn`, `<sync_address>`.** Set synchronization barrier for Independent Thread Scheduling reconvergence. Typically at the start of a divergent region.
+* **BSYNC.RECONVERGENT `Bn`.** Wait for barrier `Bn` reconvergence. Typically at the end of a divergent region.
 
 ### Arithmetic helper patterns
 
-Ptxas emits out-of-line helper functions for operations that are too expensive to inline. These appear as `CALL.REL.NOINC` to a named function, with the function body placed after the main kernel's EXIT.
+Ptxas handles expensive arithmetic operations via three distinct strategies on SM120 + CUDA 13.2:
 
-**`__cuda_sm20_rem_u16` (runtime modulo).** 21 instructions implementing Newton-Raphson-like reciprocal multiplication for u16 integer modulo. Structure:
+1. **External named helper** (rare, observed only for u16 modulo): CALL to a named function like `__cuda_sm20_rem_u16`, body placed elsewhere in the binary.
+2. **Local in-kernel subroutine** (for rare slowpaths): `CALL.REL.NOINC` to an address within the same kernel, body placed after the main EXIT.
+3. **Full inlining** (dominant strategy): the entire algorithm expanded into the main kernel body, possibly with a BRA branch for an inline slowpath.
+
+**`__cuda_sm20_rem_u16` (runtime modulo, external helper).** 21 instructions implementing Newton-Raphson-like reciprocal multiplication for u16 integer modulo. Structure:
 
 ```
 Stage 1: integer -> float conversion (I2F.U16 on XU)
@@ -829,34 +1221,114 @@ Stage 5: quotient correction + remainder = a - q * b via IMAD
 
 ABI: R8 = dividend, R9 = divisor on entry, R9 = remainder on exit. Return address passed via separate register (R7 or R10 depending on caller's pressure).
 
-**`__cuda_sm20_div_u16` (runtime division).** Similar structure, same reciprocal primitive, stops at Stage 4 (does not reconstruct remainder).
+**`__cuda_sm20_div_u16` (runtime division, external helper).** Similar structure, same reciprocal primitive, stops at Stage 4 (does not reconstruct remainder).
 
-**Calling convention for these helpers:**
+**Calling convention for external helpers:**
 * Caller executes `MOV Rn, return_address` to set up the return address register.
 * Caller issues `CALL.REL.NOINC` to the helper.
 * Callee reads the return address register early and does `RET.REL.NODEC` at the end.
 * u16 ABI requires the caller to mask arguments: `LOP3.LUT R, R, 0xffff, RZ, 0xc0, !PT` truncates to 16 bits before the CALL.
 
-**How to recognize the pattern when reading SASS:**
-* A `MOV Rn, 0x???` with a small immediate just before a `CALL.REL.NOINC` is the return address setup. The immediate matches the address of the instruction following the CALL.
-* A `LOP3.LUT R, R, 0xffff, RZ, 0xc0, !PT` just before a CALL indicates u16 truncation, meaning the callee is one of the u16 helpers.
+**Inline Granlund-Montgomery for integer division (u32, u64 fast path, s32).** 5-stage reciprocal multiplication, 21 instructions for u32, 30+ for u64 fast path with correction, slightly larger for s32 with sign handling:
 
-**Signature of different helper categories:**
-* **Div/mod helpers**: CALL to `__cuda_sm20_rem_*` or `__cuda_sm20_div_*`, 20-30 instructions, uses MUFU.RCP.
-* **Transcendental helpers**: CALL to a math function (sin, cos, exp, log), longer bodies (40-100 instructions), may use multiple MUFU variants and constant tables.
-* **Large integer helpers**: 64-bit division/modulo, longer still, multiple reciprocal iterations for precision.
+```
+Stage 1: UI2F.U32.RP (or I2F.RP for signed) - convert divisor to float, round +inf
+Stage 2: MUFU.RCP - float reciprocal
+Stage 3: IADD with magic constant 0xffffffe - tune F2I rounding
+Stage 4: F2I.FTZ.U32.TRUNC.NTZ - back to integer
+Stage 5: IMAD.HI.U32 chain for quotient correction; predicated IADD pair for double correction
+```
+
+For signed variant: wrapped with IABS (both operands) at entry, LOP3 0x3c (sign XOR) applied to result.
+
+**Inline polynomial math library helpers (log2f, expf, sinf fast path).** Pattern: range reduction (bit manipulation + FFMA) → polynomial evaluation via Horner's method (chain of FFMAs with `.reuse` on the multiplicand) → reconstruction (FADD with exponent, bit manipulation).
+
+Recognizable by:
+* Long chains of FFMA with monotonic structure (`.reuse` flag on multiplicand)
+* Specific mathematical constants matching known polynomial approximations
+* `IADD R, R0, -<bit pattern>` where the bit pattern is that of a mathematical constant (e.g., `-0x3f3504f3 = -sqrt(2)/2`)
+* For expf: magic constant `12582913 = 0x00C00001` with FFMA.RM for integer extraction
+
+**Local CALL subroutine (sqrtf slowpath, u64 div slowpath).** Pattern:
+
+```
+BSSY.RECONVERGENT B0, <sync_address>       ; establish reconvergence point
+<test for slowpath condition>
+@!P BRA <fast_path>                         ; if not needed, skip
+MOV Rn, <return_address>                    ; set up return (arbitrary register per kernel)
+CALL.REL.NOINC <local_slowpath>             ; call
+<return_address>: (continuation)
+BSYNC.RECONVERGENT B0                       ; reconverge
+
+<main kernel EXIT>
+
+<local_slowpath>:
+<handle edge cases>
+RET.REL.NODEC Rn 0x0                         ; return via Rn, offset 0
+```
+
+The local subroutine is unreachable from normal control flow (placed after EXIT), called only when the slowpath condition is met.
+
+**Subnormal handling pattern (universal for FP MUFU).** Used in 11d, 11e, 11i, 11j and likely in every kernel that uses MUFU on FP32:
+
+```
+FSETP.GEU.AND P0, PT, |R|, 1.175494350822287508e-38, PT    ; test |x| >= FLT_MIN
+@!P0 FMUL R, R, 16777216                                     ; scale up by 2^24 if subnormal
+<MUFU operation>
+@!P0 <correction>                                            ; correct for the scaling
+```
+
+Correction depends on operation:
+* log2: subtract 24 (since log2(2^24 * x) = log2(x) + 24)
+* rsqrt: multiply by 2^12 = 4096 (since rsqrt halves the exponent, scale factor is 2^12)
+* fdividef: no correction if both operands scaled equally (ratio preserved)
+
+**Payne-Hanek range reduction (sinf, cosf with large arguments).** Triggered when `|x| >= 2^17`. Pattern:
+
+```
+LDCU.64 UR, c[0x4][URZ]                    ; load 2/π table base pointer
+IMAD.SHL.U32 R, input, 0x100, RZ           ; shift input mantissa for alignment
+<6-iteration loop with UIADD3 counter>:
+  LDG.E.CONSTANT R, desc[UR][R.64]         ; load chunk of 2/π table
+  IMAD.WIDE.U32 R, chunk, mantissa, acc    ; multi-precision accumulate
+  @predN MOV R11..R16, partial              ; save partial products
+<post-loop combine via SHF.L.W.U32.HI>
+I2F.F64.S64 R, reduced                     ; convert to double
+DMUL R, R, π/2_FP64                         ; multiply in FP64
+F2F.F32.F64 R, R                           ; narrow back to FP32
+```
+
+**Signature of different helper categories (updated):**
+* **Div/mod u16 external helper**: CALL to `__cuda_sm20_rem_u16` or `__cuda_sm20_div_u16`, 20-30 instructions, uses MUFU.RCP, caller masks with `0xffff` pre-CALL.
+* **Div u32/u64/s32 inline**: 21+ instructions with UI2F.U32.RP → MUFU.RCP → magic IADD → F2I → IMAD.HI.U32 chain. No CALL.
+* **Math library inline polynomial**: long FFMA chain with `.reuse` on multiplicand, specific coefficients matching known approximations (Remez, Taylor).
+* **Transcendental with MUFU direct (intrinsics)**: single MUFU.LG2/EX2/RSQ + subnormal handling. 4-5 instructions.
+* **sqrtf/sinf slowpath via local CALL**: BSSY + MOV link + CALL.REL.NOINC + RET.REL.NODEC, body after main EXIT.
+* **Payne-Hanek large-argument trig**: LDG.E.CONSTANT table access + UIADD3 loop + IMAD.WIDE.U32 accumulation + FP64 DMUL + F2F.F32.F64.
 
 ### Global diagnostic workflow
 
 When opening any SASS dump for performance work:
 
-1. Skip the prologue by pattern matching the 8-instruction skeleton.
-2. Find the bounds check `@P0 EXIT` and the body section that follows.
-3. Locate the hot region (backward BRA for a loop body, or the dense compute block).
-4. Count the useful compute ratio (FFMA + FADD + FMUL + MMA divided by total body instructions).
-5. Grep for artifact signals: STL/LDL (spill), CALL (slowpath), abnormal size (cascade).
-6. Trace scoreboards: which SB is used, who produces, who waits.
-7. Check stall counts. Stall=15 repeated signals a problem.
-8. Verify fusion. Count FFMAs vs separate FMUL+FADD chains.
-9. Look for NOP padding within the body (FP64 bottleneck).
-10. Correlate with NCU. SASS identifies the "who", NCU quantifies the "how much".
+1. **Skip the prologue** by pattern matching the 8-instruction skeleton.
+2. **Find the bounds check** `@P0 EXIT` and the body section that follows.
+3. **Locate the hot region** (backward BRA for a loop body, or the dense compute block).
+4. **Count the useful compute ratio** (FFMA + FADD + FMUL + MMA divided by total body instructions).
+5. **Grep for artifact signals**:
+   * STL / LDL → register spill (kernel too wide)
+   * CALL to named symbol → external helper (currently only `__cuda_sm20_rem_u16`)
+   * CALL to hex offset within kernel → local slowpath subroutine
+   * BRA forward followed by BRA back → inline BRA slowpath
+   * abnormal size → cascade unrolling or full math library inlining
+6. **Trace scoreboards**: which SB is used, who produces, who waits.
+7. **Check stall counts**. Stall=15 repeated signals a problem.
+8. **Verify fusion**. Count FFMAs vs separate FMUL+FADD chains.
+9. **Look for NOP padding within the body** (FP64 bottleneck on consumer SM120).
+10. **Identify arithmetic patterns** via their signatures:
+    * UI2F.U32.RP + MUFU.RCP → inline integer division/modulo
+    * FSETP.GEU vs FLT_MIN + FMUL 2^24 → subnormal handling on MUFU input
+    * Long FFMA chain with `.reuse` on multiplicand → polynomial evaluation (check coefficients)
+    * LDG.E.CONSTANT in a counter loop → table-based algorithm (Payne-Hanek or similar)
+    * IADD with magic `0x3f3504f3` or similar FP32 bit pattern → mathematical constant subtraction
+    * BSSY/BSYNC with short body → divergence before warp-synchronous op OR slowpath branch
+11. **Correlate with NCU**. SASS identifies the "who", NCU quantifies the "how much".
