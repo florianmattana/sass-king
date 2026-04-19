@@ -542,6 +542,8 @@ Rules that hold across every SM120 dump we have examined. These are reliable eno
 * ptxas classifies values as uniform or per-thread automatically. Uniformity means "identical across all 32 threads of the warp".
 * NOP padding at the end of every kernel aligns total size to a memory boundary (typically 128 or 512 bytes). Never executed.
 * ptxas emits a BRA-to-self after the final EXIT as a safety trap. Never reached by a correct control path.
+* **Ptxas is deterministic.** Identical source produces byte-identical SASS. Prologue byte-identity between two kernels is a reliable signal that their prologues have not drifted. Conversely, if prologue bytes differ when they should not, the source changed somewhere the reader did not expect.
+* **Register allocation is global.** Ptxas performs liveness analysis over the entire kernel, not locally. Dead registers are recycled across semantic boundaries (threadIdx's R0 becomes an FP scratch register in kernel 02, pointer high half R3 becomes an FFMA target in kernel 05). A source change in one section can cause register renames in another section as a ripple effect of the global pass.
 
 ### Canonical prologue (every kernel)
 
@@ -660,7 +662,30 @@ BAR.SYNC.DEFER_BLOCKING 0x0             // __syncthreads()
 LDS R_val, [R_addr]
 ```
 
-The `UMOV UR, 0x400` + `ULEA ..., 0x18` pair appears if and only if the kernel uses `__shared__` memory. The `0x18 = 24` in ULEA is a shift amount, producing a per-block offset within the SM-wide shared pool.
+The `UMOV UR, 0x400` + `ULEA ..., 0x18` pair appears if and only if the kernel uses `__shared__` memory.
+
+**Decoded formula.** The ULEA computes `UR_base = (UR_cga << 0x18) + 0x400`, which expands to:
+
+```
+shared_base = (SR_CgaCtaId << 24) + 0x400
+```
+
+where `SR_CgaCtaId` is the block's unique identifier (per-cluster on SM90+, fallback to block ID on non-cluster kernels). Interpretation:
+
+* **`0x400`** is an architectural offset, independent of the kernel's parameters. Observed constant at 0x400 across shared sizes 512B, 1024B, 2048B, block sizes 128, 256, 512. Hypothesis: it is the entry point of shared memory within the SM-wide memory-mapped pool, or a descriptor field encoded into the base.
+* **Shift by 24** creates a per-block stride of 16 MiB in the virtual address space. This is far larger than actual shared memory per SM (48 KB to 228 KB), so the high bits of CgaCtaId never represent real addresses. Hypothesis: the shift is a pattern for the shared memory descriptor encoding rather than a direct address, and the hardware masks/maps the high bits internally.
+
+**For multiple shared buffers,** ptxas emits a single UMOV + ULEA and derives each subsequent buffer's base by adding the cumulative size of the preceding buffers:
+
+```
+UMOV UR4, 0x400
+ULEA UR4, UR_cga, UR4, 0x18              // base of smem_a
+UIADD3 UR5, UPT, UPT, UR4, 0x400, URZ    // base of smem_b (smem_a is 0x400 bytes)
+```
+
+Shared buffers are placed consecutively without automatic padding. Alignment only from the programmer's struct declarations or explicit `__align__`.
+
+**Shared memory addressing does not use a descriptor.** Unlike LDG/STG which use `desc[UR][R.64]`, LDS/STS use `[R]` direct or `[R+UR]`. The base is encoded in the register itself. The `[R+UR]` form is useful when multiple buffers share the same per-thread offset: one R for `&smem[tid]`, multiple UR for the different buffer bases.
 
 ### Arithmetic operator compilation rules
 
@@ -686,6 +711,32 @@ ptxas systematically places independent instructions between a producer and its 
 * **Constant materialization (HFMA2) placed at the pipeline choice point.** HFMA2 is used in compute-heavy blocks where the FMA pipeline is loaded, MOV is used otherwise.
 * **VOTE.ANY hoisted to kernel start** when its input is `PT` (as in `__activemask()`). No data dependency, so it can run in parallel with pointer loads.
 * **Counter update interleaved with compute in unrolled loops.** UIADD3 and UISETP for loop control are placed between FFMAs, not at the tail.
+
+### Scoreboard assignment rules
+
+ptxas chooses between grouping producers onto a single scoreboard or assigning distinct scoreboards based on the downstream consumer topology:
+
+* **Co-consumed producers share a scoreboard.** Multiple LDGs all feeding the same downstream FFMA go onto the same SB so the consumer waits once for all of them. Observed in kernel 01 (two LDGs on SB4) and kernel 03 (three LDGs on SB4).
+* **Parallelizable consumers get distinct scoreboards.** Multiple LDCs each feeding their own independent IMAD.WIDE get distinct SBs (SB0, SB1, SB2, SB3) so the IMADs can proceed in parallel. Observed in kernel 03's four pointer loads.
+* **Trade-off.** The SB budget is 6 per warp. Grouping economizes SBs for later use; distinct SBs preserve parallelism. ptxas chooses based on whether the consumers depend on each other or not.
+
+### Pipeline characteristics
+
+Observed per-pipeline latency behavior:
+
+* **LDC stall=1 as cadence.** Constant cache responds fast, so ptxas emits LDCs back-to-back with stall=1, relying on scoreboard grouping or distinct SBs for correctness. LDC latency is short enough that the stall count does not need to be inflated.
+* **LDG requires large effective latency.** Global memory loads have variable latency on the order of hundreds of cycles. ptxas relies on scoreboards entirely, emitting stall=1 or stall=2 on the LDG itself and placing the consumer's wait much later.
+* **ISETP → @P EXIT stall=13 is universal.** The predicate producer for a bounds check always has stall=13 regardless of the surrounding code. Recurs in every kernel. Hypothesis: cross-pipeline transfer from ALU to CBU.
+* **NOP padding between DADDs on FP64.** The FP64 pipeline on consumer SM120 has restricted throughput. Consecutive DADDs show NOP gaps (3-4 NOPs between operations) as an instruction-level manifestation.
+
+### Cost rules (quantified overhead per source feature)
+
+Quantified overhead per source-level construct, useful for budgeting kernel cost:
+
+* **Pointer tax: +3 instructions per array argument.** Each additional pointer in the kernel signature costs approximately three SASS instructions: one LDC.64 to load the pointer from constant memory, one IMAD.WIDE to compute the per-thread address, and potentially one more memory op (LDG or STG) depending on usage. Independent of how the array is consumed by compute.
+* **Constant materialization amortization.** A distinct FP32 multiplier constant costs one HFMA2 materialization. If the constant is used N times, the amortized cost per use is 1/N instructions. Kernels with many distinct multiplier constants (FIR filters, polynomial evaluation) pay the materialization cost for each.
+* **Modulo runtime slowpath: 10-12× vs power-of-2.** A modulo by a runtime variable triggers a CALL to `__cuda_sm20_rem_u16` costing ~40-60 cycles in throughput. A modulo by a power-of-2 constant compiles to 1-2 inline instructions costing ~5 cycles. Differential of roughly 10-12×.
+* **Modulo non-power-of-2 constant: ~10 instructions inline.** Between the two extremes: a constant that is not a power of 2 but is known at compile time compiles to an inline reciprocal multiplication with a magic number, around 10 instructions, 3-4× more expensive than power-of-2 but far cheaper than runtime CALL.
 
 ### Compiler artifacts to watch for
 
@@ -747,6 +798,53 @@ Operand-level flags (not opcode suffixes but worth distinguishing):
 * **`.H0`, `.H1`** on a register name: selects the low or high 16 bits of a packed half-precision register.
 
 Modifiers we have not yet encountered in our dumps but that appear in the Blackwell ISA reference are not covered here.
+
+### Opcode operand semantics
+
+Syntax reminders for the operand orders of opcodes that are easy to misread.
+
+* **FFMA `dst, srcA, srcB, srcC`.** Computes `dst = srcA * srcB + srcC`. srcC is the addend, the only position that can hold an FP32 immediate. srcA and srcB must be registers. Same order as PTX `fma.f32`.
+* **IMAD `dst, srcA, srcB, srcC`.** Computes `dst = srcA * srcB + srcC`. Like FFMA but integer. Ubiquitous in address arithmetic.
+* **IMAD.WIDE `dst, srcA, imm, srcC`.** Computes a 64-bit result `dst = srcA * imm + srcC` where `dst` is a register pair `R:R+1` and srcC is also a pair. The `imm` is typically `sizeof(element)` in bytes. Used for `&array[i]` computation.
+* **LEA `R_dst, R_src1, UR_base, imm`.** Computes `R_dst = (R_src1 << imm) + UR_base`. Mixed per-thread and uniform: per-thread index scaled by shift, added to uniform base. Canonical shared memory address derivation on SM120.
+* **ULEA `UR_dst, UR_src1, UR_src2, imm`.** Uniform LEA: `UR_dst = (UR_src1 << imm) + UR_src2`. Purely uniform, used in shared memory base construction.
+* **IADD3 `dst, srcA, srcB, srcC`.** Three-input add: `dst = srcA + srcB + srcC`. Common in index arithmetic for loop counters and address computation.
+* **UIADD3 `UR_dst, UPsrcA, UPsrcB, UR_1, UR_2, UR_3`.** Uniform three-input add with predicate masks. `UPsrcA` and `UPsrcB` are predicates that can conditionally negate the corresponding addend. Used to flip signs of inputs on the uniform path.
+* **PRMT `R_dst, R_src1, imm, R_src2`.** Byte permutation. Each nibble of the 16-bit immediate selects one byte from the 8 available bytes (4 from src1, 4 from src2) to place at the corresponding destination byte. Used in the integer division helper for byte-level manipulation of the magic number.
+* **LOP3.LUT `R_dst, srcA, srcB, srcC, lut_imm, predicate`.** Applies a 3-input lookup table (256 possible functions) over the three source operands. The `lut_imm` byte encodes the truth table. `0xc0` is the canonical "AND then compare-to-zero" pattern used for lane-zero tests and power-of-2 mask operations.
+
+### Arithmetic helper patterns
+
+Ptxas emits out-of-line helper functions for operations that are too expensive to inline. These appear as `CALL.REL.NOINC` to a named function, with the function body placed after the main kernel's EXIT.
+
+**`__cuda_sm20_rem_u16` (runtime modulo).** 21 instructions implementing Newton-Raphson-like reciprocal multiplication for u16 integer modulo. Structure:
+
+```
+Stage 1: integer -> float conversion (I2F.U16 on XU)
+Stage 2: reciprocal via MUFU.RCP (XU pipeline)
+Stage 3: floating-point quotient via FMUL
+Stage 4: float -> int with F2I.U32.TRUNC.NTZ
+Stage 5: quotient correction + remainder = a - q * b via IMAD
+```
+
+ABI: R8 = dividend, R9 = divisor on entry, R9 = remainder on exit. Return address passed via separate register (R7 or R10 depending on caller's pressure).
+
+**`__cuda_sm20_div_u16` (runtime division).** Similar structure, same reciprocal primitive, stops at Stage 4 (does not reconstruct remainder).
+
+**Calling convention for these helpers:**
+* Caller executes `MOV Rn, return_address` to set up the return address register.
+* Caller issues `CALL.REL.NOINC` to the helper.
+* Callee reads the return address register early and does `RET.REL.NODEC` at the end.
+* u16 ABI requires the caller to mask arguments: `LOP3.LUT R, R, 0xffff, RZ, 0xc0, !PT` truncates to 16 bits before the CALL.
+
+**How to recognize the pattern when reading SASS:**
+* A `MOV Rn, 0x???` with a small immediate just before a `CALL.REL.NOINC` is the return address setup. The immediate matches the address of the instruction following the CALL.
+* A `LOP3.LUT R, R, 0xffff, RZ, 0xc0, !PT` just before a CALL indicates u16 truncation, meaning the callee is one of the u16 helpers.
+
+**Signature of different helper categories:**
+* **Div/mod helpers**: CALL to `__cuda_sm20_rem_*` or `__cuda_sm20_div_*`, 20-30 instructions, uses MUFU.RCP.
+* **Transcendental helpers**: CALL to a math function (sin, cos, exp, log), longer bodies (40-100 instructions), may use multiple MUFU variants and constant tables.
+* **Large integer helpers**: 64-bit division/modulo, longer still, multiple reciprocal iterations for precision.
 
 ### Global diagnostic workflow
 
