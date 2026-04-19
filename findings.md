@@ -451,6 +451,65 @@ Chapter focused on warp-synchronous communication primitives. Twelve variants te
 
 ---
 
+## Kernel 10 REDUX (hardware warp reduction)
+
+Chapter dedicated to the REDUX instruction family: hardware warp reduction added in Ampere (SM80), present on SM120. Eight variants tested covering SUM, MIN/MAX (signed and unsigned), AND, OR, XOR.
+
+### Observations (general)
+
+* [OBS] All 8 REDUX variants share the same opcode bytes `0x00000000020773c4`. Only the control code differs between variants. REDUX is a single opcode with eight semantic variants encoded in the control code bits.
+* [OBS] Three control code bits encode the operation: bits 14-16 of the control code. Pattern: bit 16 selects between bitwise/arithmetic (0) and comparison (1) classes. Within each class, bits 14-15 select the specific operation.
+* [OBS] Bit 9 (value 0x200) of the control code encodes signedness. Set to 1 for `.S32` variants, 0 for unsigned and bitwise variants.
+* [OBS] cuobjdump display asymmetry: `.U32` is never shown (unsigned MIN/MAX appear as `REDUX.MIN` and `REDUX.MAX`). `.AND` is never shown (AND appears as plain `REDUX`). Only `.S32` is explicit.
+* [OBS] REDUX is the first SASS instruction in our chapters that writes across register files: per-thread register input, uniform register output. `REDUX UR7, R2` takes a per-thread R register and writes to a uniform UR register.
+* [OBS] Downstream per-thread consumers require a MOV R, UR to cross back to the per-thread file. The MOV waits on REDUX's scoreboard (REDUX is variable latency).
+* [OBS] Identity load strategy depends on the identity value. HFMA2 when the 32-bit bit pattern can be expressed as concatenation of two half-float values (0x00000000, 0x80000000). MOV 32-bit immediate otherwise (0x7FFFFFFF, 0xFFFFFFFF).
+* [OBS] `HFMA2 R, -RZ, RZ, -0.0, 0` loads 0x80000000 into R. The `-0.0` in the high half-float slot sets bit 31 of the concatenated result. First observation of HFMA2 used to load a specific integer bit pattern (INT_MIN) rather than an arbitrary FP32 constant.
+* [OBS] 25 of 27 instructions are byte-identical across all 8 variants. Only the identity load (address 0x0050) and the REDUX itself (address 0x00f0) differ. The kernel skeleton is mechanically determined by the surrounding source (bounds check + warp-sync + per-warp output).
+* [OBS] REDUX replaces the 10-instruction SHFL butterfly reduction (5 SHFL.BFLY + 5 FADD/IADD) with 1 instruction and 1 pipeline stage instead of 5 sequential stages.
+
+### Resolved hypotheses
+
+* [RES] REDUX is a single opcode with operation-in-control-code encoding, not a family of distinct opcodes. Confirmed by byte-identical opcode bytes across 8 variants.
+* [RES] HFMA2 can load INT_MIN (0x80000000) via the `-0.0` half-float trick. Confirmed by kernel 10c.
+* [RES] Ptxas selects HFMA2 vs MOV immediate based on whether the target constant is half-float encodable. Confirmed by the 8 identity loads.
+* [RES] The MOV R, UR after REDUX is the scoreboard consumer. Confirmed by the stall/wait pattern visible in the control code of the MOV at address 0x0110.
+
+### Open hypotheses
+
+* [HYP] `__reduce_add_sync` on unsigned int produces the same SASS as on signed int. Not directly tested (would need a 10i variant).
+* [HYP] Bits 15+16 of control code simultaneously set may correspond to reserved encodings. Not observed.
+* [HYP] Cluster-scope CREDUX (mentioned in the herrmann SASS evolution gist for SM100a) may exist on SM120. Not tested, our kernels do not use clusters.
+* [HYP] Full decomposition rules for "which integer constants are HFMA2-loadable" not formalized. Only 0x00000000 and 0x80000000 observed as HFMA2 targets.
+
+### Gaps
+
+* [GAP] Full bit decoding of REDUX scheduling portion of the control code (stall, yield, SBS, wait mask) not validated against a parser. Inferred from context but not cross-checked.
+* [GAP] REDUX cycle latency not measured. Microbenchmarking deferred per D009.
+* [GAP] REDUX unsigned SUM not tested (no `__reduce_add_sync` on unsigned variant written).
+
+### New instructions observed in this chapter
+
+| Opcode | Usage |
+|---|---|
+| REDUX | Warp AND reduction, unsigned (default when no suffix) |
+| REDUX.OR | Warp bitwise OR |
+| REDUX.XOR | Warp bitwise XOR |
+| REDUX.SUM.S32 | Warp integer sum, signed |
+| REDUX.MIN | Warp min, unsigned (implicit) |
+| REDUX.MIN.S32 | Warp min, signed |
+| REDUX.MAX | Warp max, unsigned (implicit) |
+| REDUX.MAX.S32 | Warp max, signed |
+
+### New idioms observed in this chapter
+
+* `HFMA2 R, -RZ, RZ, -0.0, 0` loads INT_MIN (0x80000000) into R.
+* `MOV R, 0x7fffffff` loads INT_MAX.
+* `MOV R, 0xffffffff` loads UINT_MAX or all-ones mask for AND.
+* `MOV R, UR` cross-file transfer after REDUX, to feed per-thread consumers.
+
+---
+
 ## Cross chapter summary
 
 ### Pipelines observed so far
@@ -467,6 +526,7 @@ Chapter focused on warp-synchronous communication primitives. Twelve variants te
 | CBU | EXIT, BRA, CALL, RET, BSSY, BSYNC |
 | FP64 | DADD (first observed in kernel 08f) |
 | VOTE | VOTE.ANY, VOTE.ALL |
+| REDUX | REDUX, REDUX.OR, REDUX.XOR, REDUX.SUM, REDUX.MIN, REDUX.MAX |
 
 ### Architectural invariants
 
