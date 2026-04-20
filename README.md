@@ -19,9 +19,18 @@ Full context: [Part 1 — Reading NVIDIA SASS from First Principles](https://flo
 * [x] Kernel 10 — Warp reduction patterns (`REDUX`, butterfly, lane-zero)
 * [x] Kernel 11 — Slowpath arithmetic (`MUFU.RCP/LG2/EX2/RSQ`, inline division, `log2f`, `expf`, `sinf`, `sqrtf`, Payne-Hanek)
 * [x] Kernel 12 — Register spill and local memory (`STL`, `LDL`, `LDL.LU`, `STL.128`, stack frame, `R2UR`)
-* [ ] Kernel 13+ — Tensor core (`HMMA`, `QMMA`, `OMMA`)
 
-### Phase 2 — Classical algorithms
+### Phase 2 — Tensor core kernels on SM120 (controlled variation)
+
+* [x] Kernel 13 — `HMMA` baseline (FP16, BF16, m16n8k16): opcode family, register allocation, accumulator chaining, serial latency model
+* [x] Kernel 14 — `QMMA` baseline FP8/FP6/FP4 (`kind::f8f6f4`, m16n8k32): new opcode family, dtype encoding decoded across 5 input dtypes, MMA-family wide invariants, serial latency model
+* [ ] Kernel 15 — MMA narrow (FP6, FP4 standalone variants, mixed-precision combinations)
+* [ ] Kernel 16 — FP4 peak (`kind::mxf8f6f4` block-scaled, `m16n8k64`, scale factor encoding)
+* [ ] Kernel 17 — `ldmatrix` and `stmatrix` (`LDSM`, `.trans` modifier, latency)
+* [ ] Kernel 18 — Pipelined MMA tile (ldmatrix + MMA scoreboard interleaving, accumulator chains)
+* [ ] Kernel 19 — Sparse MMA (sparsity metadata encoding)
+
+### Phase 3 — Classical algorithms
 
 * [ ] Vector Add
 * [ ] Prefix Sum (scan)
@@ -30,7 +39,7 @@ Full context: [Part 1 — Reading NVIDIA SASS from First Principles](https://flo
 * [ ] Softmax
 * [ ] LayerNorm / RMSNorm
 
-### Phase 3 — Library audits
+### Phase 4 — Library audits
 
 Real production kernels, annotated end to end. Targets below; kernel counts reflect what is available on gpuasm.com.
 
@@ -57,7 +66,7 @@ Real production kernels, annotated end to end. Targets below; kernel counts refl
 | sgemm              | 60      | Planned |
 | quack              | —       | Planned |
 
-### Phase 4 — Cross-architecture
+### Phase 5 — Cross-architecture
 
 Same studies replayed on:
 
@@ -67,7 +76,7 @@ Same studies replayed on:
 * [ ] SM90a (H100)
 * [ ] SM100a (B200)
 
-### Phase 5 — Reference
+### Phase 6 — Reference
 
 * [ ] Per-instruction SASS reference, one page per opcode, per architecture, with empirical latency, throughput, pipeline, and dual-issue rules.
 
@@ -83,6 +92,17 @@ Same studies replayed on:
 | SM120  | RTX 5070 Ti/5090 | Hybrid SM90/SM100 ISA, `mma.sync` with `mxf8f6f4`   |
 
 Work starts on SM120 (direct hardware access). Other architectures via public dumps and contributors.
+
+## Repository layout
+
+* `01_vector_add/` to `12_register_spill/` — Phase 1 teaching kernels (basic SASS patterns, controlled variation)
+* `tensor_cores/` — Phase 2 tensor core kernels organized by chapter
+  * `13_hmma_fp16/` — HMMA opcode family baseline
+  * `14_qmma_fp8/` — QMMA opcode family baseline
+  * `15_mma_narrow/`, `16_fp4_peak/`, `17_ldmatrix/`, `18_pipelined_tile/`, `19_sparse_mma/` — planned
+* `FINDINGS.md` — running log of observations, hypotheses, and resolutions, organized by chapter, with cross-chapter summary of pipelines, invariants, and canonical patterns
+
+Each chapter folder contains the kernel sources (`.cu`), compiled binaries, and a `conclusion<N>.md` writeup. SASS dumps (`.sass`) are reproducible from the binaries via `cuobjdump --dump-sass` and are not committed.
 
 ## Tools
 
