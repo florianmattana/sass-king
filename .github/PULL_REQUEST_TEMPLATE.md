@@ -47,6 +47,5 @@ Hypothesis remaining to be validated by microbenchmark or variation:
 
 * [ ] An issue was opened first and approved by the maintainer
 * [ ] Dump metadata (GPU, driver, CUDA, compile command) is included where applicable
-* [ ] No dashes used as bullet markers in markdown files
 * [ ] Claims are tagged as observed, inferred, or hypothesis
 * [ ] One kernel study, one dump, or one correction only in this PR
