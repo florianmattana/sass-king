@@ -839,6 +839,182 @@ Ptxas applies these techniques in order before resorting to spill:
 
 ---
 
+The content below is a skeleton [WIP] for tensor core findings, to be filled chapter by chapter. Integrates with the existing structure of FINDINGS.md: new opcodes extend the Pipelines table in the Cross chapter summary, new canonical patterns add to the existing Canonical patterns list, new architectural invariants add to the existing Architectural invariants list.
+
+---
+
+## Kernel 13 HMMA baseline (FP16, BF16, m16n8k16)
+
+### Variants and outcomes
+
+[WIP] Populated as chapter 13 progresses.
+
+### Key findings
+
+[WIP] Populated after chapter 13a-13e are dumped and analyzed.
+
+### Open questions
+
+* [HYP] SASS opcode for `mma.sync.aligned.m16n8k16.row.col.*`. Likely `HMMA` (Volta/Turing/Ampere heritage), to confirm on SM120.
+* [HYP] Whether the dtype information is in the opcode modifier, operand encoding, or both.
+* [HYP] Fragment layout preservation from PTX to SASS.
+* [HYP] MMA scoreboard usage: fixed-latency or variable-latency.
+
+---
+
+## Kernel 14 QMMA FP8 (kind::f8f6f4, m16n8k32)
+
+### Variants and outcomes
+
+[WIP] Populated as chapter 14 progresses.
+
+### Key findings
+
+[WIP]
+
+### Open questions
+
+* [HYP] SASS delta between `mma.sync` and `mma.sync.kind::f8f6f4`. Opcode change (HMMA → QMMA?) or modifier only.
+* [HYP] FP8 packing into 32-bit registers.
+
+---
+
+## Kernel 15 MMA narrow (FP6, FP4 at k=32)
+
+[WIP]
+
+---
+
+## Kernel 16 FP4 peak (k=64 block-scaled)
+
+[WIP]
+
+### Open questions
+
+* [HYP] Why `kind::mxf8f6f4` at k=64 reaches peak (900 TFLOPS) while `kind::f8f6f4` at k=32 plateaus at 238 TFLOPS. [OBS from Lei Mao benchmark, to explain at SASS level].
+* [HYP] Scale factor register encoding in SASS.
+* [HYP] `-arch=sm_120` vs `-arch=sm_120a` SASS delta for block-scaled atoms.
+
+---
+
+## Kernel 17 ldmatrix and stmatrix
+
+[WIP]
+
+### Open questions
+
+* [HYP] SASS opcode for ldmatrix. Candidate `LDSM` (Jia et al. heritage).
+* [HYP] Latency of ldmatrix x1, x2, x4.
+* [HYP] `.trans` implementation: SASS modifier or address computation delta.
+
+---
+
+## Kernel 18 Pipelined MMA tile
+
+[WIP]
+
+---
+
+## Kernel 19 Sparse MMA
+
+[WIP]
+
+### Open questions
+
+* [HYP] Sparse MMA SASS opcode. Candidate: modifier on MMA or distinct opcode.
+* [HYP] Sparsity metadata encoding in SASS operands.
+
+---
+
+# Additions to the Cross chapter summary section
+
+## Pipelines observed so far (row to add once TC opcodes are observed)
+
+Once chapter 13 reveals the first MMA opcode, add a new row to the Pipelines table:
+
+| TC | HMMA, (later QMMA if distinct), (later others) |
+
+[WIP] Exact pipeline name to be confirmed. Candidate: `TC` (tensor core), following the convention of `FMA`, `ALU`, `LSU`, etc.
+
+## Architectural invariants (to add as observed)
+
+Once verified empirically:
+
+* [HYP→?] **MMA on SM120 is warp-level only.** No wgmma (Hopper-only), no tcgen05.mma (Blackwell datacenter only). Every MMA instruction is scoped to a single warp of 32 threads. [To confirm by attempting to compile a tcgen05 PTX and observing the rejection or fallback.]
+* [HYP→?] **SM120 MMA only supports TN layout.** A row-major, B column-major. Other layouts reject at PTX level. [To confirm.]
+* [HYP→?] **Block-scaled MMA requires `-arch=sm_120a`.** Plain `sm_120` rejects kind::mxf8f6f4. [To confirm.]
+* [HYP→?] **Peak performance depends on shape, not only dtype.** FP4 at k=32 reaches 238 TFLOPS, FP4 at k=64 block-scaled reaches 933 TFLOPS (Lei Mao benchmark). SASS-level explanation pending.
+
+## Canonical patterns (to add as observed)
+
+### [WIP] Canonical MMA tile pattern
+
+Once chapter 18 is complete:
+```
+ldmatrix.x4 A fragments
+ldmatrix.x4 B fragments
+<scoreboard wait>
+MMA
+<optional: accumulator chain with next MMA>
+...
+stmatrix D fragments OR STG to global
+```
+
+### [WIP] Canonical ldmatrix + MMA pipelining
+
+Once chapter 17 and 18 reveal the pattern.
+
+## Arithmetic operator compilation rules (rows to add)
+
+| Source | ptxas strategy |
+|---|---|
+| `mma.sync.aligned.m16n8k16.f16.f16.f16.f16` inline PTX | [WIP from chapter 13] |
+| `mma.sync.aligned.kind::f8f6f4.m16n8k32...` inline PTX | [WIP from chapter 14] |
+| `mma.sync.aligned.kind::mxf8f6f4.block_scale...` inline PTX | [WIP from chapter 16] |
+| `ldmatrix.sync.aligned.x4.shared.b16` inline PTX | [WIP from chapter 17] |
+
+## Cost rules (rows to add)
+
+* **MMA m16n8k16 f16 cost**: [WIP from chapter 13 microbenchmark].
+* **MMA m16n8k32 FP8 cost**: [WIP from chapter 14].
+* **MMA m16n8k64 FP4 block-scaled cost (peak path)**: [WIP from chapter 16].
+* **ldmatrix.x4 cost**: [WIP from chapter 17].
+* **Scale factor load overhead for block-scaled MMA**: [WIP from chapter 16].
+* **Sparsity metadata load overhead**: [WIP from chapter 19].
+
+## Compiler artifacts (entries to add)
+
+* **First HMMA observation**: the opcode byte pattern [WIP from chapter 13]. Signal that tensor core is active.
+* **kind::f8f6f4 SASS form**: [WIP from chapter 14]. Signal that FP8 MMA is in use.
+* **Block scaling signal**: [WIP from chapter 16]. Additional operand for scale factor register.
+* **LDSM (ldmatrix)**: [WIP from chapter 17]. Signal of MMA setup.
+
+## Reading opcode modifiers (entries to add)
+
+Once observed:
+* **`.kind::<X>`** on MMA: [WIP]. Likely a SASS modifier or a separate opcode per kind.
+* **`.block_scale`** on MMA: [WIP].
+* **`.scale_vec::<NX>`** on MMA: [WIP].
+* **`.trans`** on LDSM: [WIP].
+
+## Opcode operand semantics (entries to add)
+
+Once observed, entries in the same style as existing opcodes:
+* **HMMA `dst_regs, src_A_regs, src_B_regs, src_C_regs`**: [WIP].
+* **QMMA / or new opcode `dst, A, B, C`**: [WIP].
+* **LDSM `dst_regs, [shared_addr]`**: [WIP].
+* **STSM `[shared_addr], src_regs`**: [WIP].
+
+## Global diagnostic workflow (entries to add)
+
+New steps for tensor core dumps:
+* **Grep for MMA opcodes** (HMMA, QMMA, or new) to locate the compute core.
+* **Grep for LDSM / STSM** to find the shared memory staging.
+* **Identify the shape and dtype** from opcode modifiers or operand patterns.
+* **Check accumulator chaining**: same register pair reused across multiple MMAs?
+* **Check ldmatrix + MMA pipelining**: scoreboard wait between load and MMA placed correctly?
+* **Check block scaling**: extra SF register operand present?
+
 ## Cross chapter summary
 
 ### Pipelines observed so far
