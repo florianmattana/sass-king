@@ -844,21 +844,177 @@ The content below is a skeleton [WIP] for tensor core findings, to be filled cha
 ---
 
 ## Kernel 13 HMMA baseline (FP16, BF16, m16n8k16)
-
+Chapter establishing the HMMA tensor core baseline on SM120. Five variants tested covering FP16 accumulator, FP32 accumulator, BF16 input, accumulator chaining, and serial latency microbenchmark.
 ### Variants and outcomes
+* [OBS] 13a (FP16 input, FP16 accumulator, single MMA): baseline `HMMA.16816.F16`. 27 useful instructions. d[0] = 0x4c004c00 = 16.0.
+* [OBS] 13b (FP16 input, FP32 accumulator, single MMA): `HMMA.16816.F32`. 31 useful instructions (+4 vs 13a: +2 LDG for C, +2 STG for D). d[0] = 16.0.
+* [OBS] 13c (BF16 input, FP32 accumulator, single MMA): `HMMA.16816.F32.BF16`. 31 useful instructions. d[0] = 16.0. 30 of 31 instructions byte-identical to 13b; only the HMMA control code differs (bit 18).
+* [OBS] 13d (FP32 accumulator, two chained MMAs where D1 feeds C2): 2 × `HMMA.16816.F32`. 37 useful instructions (+6 vs 13b: +1 HMMA, +2 NOPs, +3 scheduling adjustments). d[0] = 32.0.
+* [OBS] 13e (N chained MMAs bracketed by clock64() for latency microbenchmark, N=16/32/64): unrolled chain. Measurements: 872/1439/2541 total cycles. Linear model: total_cycles ≈ 312 + 35 × N.
+### Key observations
+* [OBS] **HMMA opcode family** on SM120: `HMMA.16816.<acc_dtype>[.<input_dtype>]`. Shape modifier `.16816` is the M×N×K concatenation. Accumulator dtype suffix (`.F16` or `.F32`) is mandatory. Input dtype suffix is omitted for FP16 (implicit default) and explicit for BF16 (`.BF16`).
+* [OBS] **MMA on SM120 is warp-level.** All 32 threads cooperate on one tile. No wgmma, no tcgen05.mma.
+* [OBS] **HMMA takes 4 SASS operands: D base, A base, B base, C base.** Fragment spans (4 registers for A FP16, 2 for B FP16, 2 or 4 for C/D depending on dtype) are implicit in the opcode. The disassembler only shows the base register of each fragment.
+* [OBS] **Opcode bytes are determined by the operand base registers only; dtype lives in the control code.** 13a, 13b, 13c with the same operand bases all share `0x000000100c0c723c` for the opcode+operand bytes. Only the 8-byte control code differs.
+* [OBS] **Control code bits identified (partial):**
+  * Bit 1 and 12 encode accumulator dtype (F16 vs F32 discrimination).
+  * Bit 18 encodes input dtype (0 = FP16 implicit, 1 = BF16 explicit).
+  * Bit 26 is the MMA scoreboard set flag (SBS), active on the first HMMA of a chain that produces a result consumed by a subsequent MMA.
+  * Bit 27 is the MMA scoreboard wait flag, active on HMMAs whose C input depends on a prior HMMA's D output.
+  * [GAP] The specific scoreboard slot number (SB0..SB5) is not decoded. Extraction requires a bit-level Blackwell ISA decoder; gpuasm.com is unavailable during this chapter.
+### Fragment layout per thread
+Matches CUTLASS atoms from `include/cute/arch/mma_sm80.hpp`:
+| Variant | D registers | A registers | B registers | C registers |
+|---|---|---|---|---|
+| 13a FP16 acc | uint32[2] = 4 half | uint32[4] = 8 half | uint32[2] = 4 half | uint32[2] = 4 half |
+| 13b FP32 acc, FP16 input | float[4] | uint32[4] = 8 half | uint32[2] = 4 half | float[4] |
+| 13c FP32 acc, BF16 input | float[4] | uint32[4] = 8 bf16 | uint32[2] = 4 bf16 | float[4] |
+### Register allocation patterns
+* [OBS] **Single-MMA case, D smaller than A (13a FP16 acc):** D and A colocated with partial overlap. D occupies the first 2 of A's 4 registers. Example: `HMMA R12, R12, R16, R18` where D=R12:R13 and A=R12:R13:R14:R15.
+* [OBS] **Single-MMA case, D equal to A in size (13b, 13c FP32 acc):** D and A colocated with complete overlap. D and A share exactly the same 4 registers. Example: `HMMA R12, R12, R16, R20` where D=R12:R13:R14:R15 and A=R12:R13:R14:R15.
+* [OBS] **Chained-MMA case (13d, 13e):** D and C colocated (accumulator in-place). A keeps its own distinct register block because A is re-read by the next HMMA in the chain. Example from 13d: `HMMA R16, R12, R10, R16` where D=C=R16:R19 (in-place) and A=R12:R15 (separate).
+* [RES] ptxas allocation rule: maximize register reuse subject to the data dependency graph. D/A colocation in single-MMA, D/C colocation in chained MMA. A and B always on distinct register bases.
+### The .reuse modifier on MMA operands
+* [OBS] **`.reuse` appears on the B operand of every HMMA in a chain except the last one.** Example from 13d: `HMMA.16816.F32 R16, R12, R10.reuse, R16` (HMMA1), `HMMA.16816.F32 R16, R12, R10, R16` (HMMA2, last in chain).
+* [OBS] `.reuse` is not emitted on A even though A is also re-read by subsequent HMMAs. [HYP] The reuse cache may prioritize smaller operands (B is 2 registers, A is 4 registers) or the cache is positional and only the B slot is enabled for MMA.
+* [OBS] `.reuse` is not emitted on C either, probably because C is already colocated with D in the chaining case (different form of reuse at the register file level).
+### The NOP pad pattern
+* [OBS] **The semantic NOP `@!UPT UIADD3 URZ, UPT, UPT, URZ, URZ, URZ` has predicate `@!UPT` which is always false (UPT is always true, `!UPT` is always false), all operands are URZ, destination is URZ. The instruction has no observable effect.**
+* [OBS] ptxas emits **2 NOPs after each HMMA** in variants 13a, 13b, 13c, 13d when the HMMA's D register is consumed by a subsequent dependent instruction (either another HMMA via D→C chain, or a STG).
+* [OBS] 13e's last HMMA (N=16) has **zero NOPs** because its consumer is `CS2R R2, SR_CLOCKLO` which reads `SR_CLOCKLO`, not R16, and therefore does not depend on the HMMA result.
+* [RES] The NOP pad is not intrinsic to HMMA. ptxas emits NOPs only when the next consumer has a data dependency on D. In a minimal kernel with no independent work to schedule between HMMA and the consumer, ptxas fills the gap with NOPs. In a production kernel (GEMM with ldmatrix, address arithmetic, index updates), these slots are filled with real work and uniform NOPs disappear or thin out.
+* [HYP] The count of 2 NOPs is a fixed scheduling slot quantum that ptxas always tries to fill. The remainder of the ~35-cycle HMMA latency is covered by the scoreboard wait on bit 27.
+### Scoreboard and variable latency
+* [OBS] **HMMA is variable-latency and uses a scoreboard mechanism.** Evidence from control code transitions in 13d and 13e.
+* [OBS] **Control code transitions in 13d:** HMMA1 has bit 27 set (produces result consumed by HMMA2 via D→C). HMMA2 has bit 27 clear (last in chain, no further MMA consumer).
+* [OBS] **Control code transitions in 13e (N=16):** HMMA #1 has bits 26 and 27 both set (first in chain, establishes scoreboard). HMMAs #2-15 have bit 27 set but bit 26 clear (wait on scoreboard, do not re-set it). HMMA #16 has bit 27 clear (no wait, consumer is CS2R which is not scoreboard-coordinated).
+* [HYP] Bit 26 encodes "set scoreboard slot". Set on the first HMMA of a chain to claim the scoreboard slot that subsequent HMMAs wait on.
+* [HYP] Bit 27 encodes "wait on scoreboard". Set on HMMAs with a data dependency on a prior HMMA; clear when no MMA dependency exists.
+* [GAP] The specific scoreboard slot number used (SB0..SB5) is not decoded.
+### Unified HMMA control code table
+| Kernel | HMMA position | Opcode+operand bytes | Control code |
+|---|---|---|---|
+| 13a | single | `0x000000100c0c723c` | `0x004ff60000000812` |
+| 13b | single | `0x000000100c0c723c` | `0x004ff60000001814` |
+| 13c | single | `0x000000100c0c723c` | `0x004ff60000041814` |
+| 13d | HMMA #1 (feeds HMMA #2) | `0x0000000a0c10723c` | `0x084ff60000001810` |
+| 13d | HMMA #2 (last in chain) | `0x0000000a0c10723c` | `0x000ff60000001810` |
+| 13e | HMMA #1 (first of chain) | `0x000000020410723c` | `0x084ff60000001810` |
+| 13e | HMMA #2-15 (mid-chain) | `0x000000020410723c` | `0x080ff60000001810` |
+| 13e | HMMA #16 (last, feeds CS2R) | `0x000000020410723c` | `0x000ff00000001810` |
+### Latency measurement
+* [OBS] Chain of N serial HMMAs bracketed by `clock64()`, where the accumulator R16:R19 is both the D output and the C input of every HMMA, forces ptxas to keep the chain serial (no reordering possible due to the data dependency).
+* Measurements:
 
-[WIP] Populated as chapter 13 progresses.
+| N | Total cycles | cycles/HMMA |
+|---|---|---|
+| 16 | 872 | 54.50 |
+| 32 | 1439 | 44.97 |
+| 64 | 2541 | 39.70 |
 
-### Key findings
+* [RES] Linear regression gives marginal cost per added HMMA: **~35 cycles/HMMA**. Fixed overhead: **~310 cycles**. Model: `total_cycles ≈ 310 + 35 × N`.
+* [RES] HMMA.16816.F32 serial latency on SM120 is approximately 35 cycles per HMMA in a dependency-chained configuration.
+* [IMPORTANT] 35 cycles is the **serial latency** (every HMMA waits on the previous). This is NOT the HMMA throughput. In a real GEMM kernel where many HMMAs are in flight simultaneously with independent accumulators, throughput is substantially lower than 35 cycles. Throughput measurement deferred to chapter 18 (pipelined tile).
+* [HYP] The ~310-cycle overhead is composed of the latency of the very first HMMA (which includes TC pipeline startup), the CS2UR + CS2R latencies, the final HMMA result becoming visible to CS2R, and scoreboard system spin-up.
+### New opcode
+* **CS2UR** — special-register to uniform-register read. Observed in 13e for `CS2UR UR6, SR_CLOCKLO`. Uniform-register variant of CS2R. Writes the clock value to a uniform register shared across the warp (semantically correct because all threads sample the same clock at the same issue slot). Companion to the per-thread `CS2R` introduced in chapter 11.
+### Scheduling observations
+* [OBS] **Destination pointer address computation placed late.** In 13b, 13c, 13d the IMAD.WIDE.U32 that computes the store-destination address (`&d[tid*4]`) is emitted after all the input LDGs and just before HMMA. Rationale: the D address is not needed until STG, so delaying its computation minimizes its register live range.
+* [OBS] **Register recycling across semantic boundaries.** In 13d, R4 is first used to hold `&b[tid*2]`. Once the two LDGs of b complete, R4 is free and ptxas overwrites R4 with `&d[tid*4]`. One physical register plays two unrelated roles. Consistent with chapter 02 register recycling pattern.
+* [OBS] **Inverted LDG order for C registers** (observed in 13b, 13c, 13d, 13e): ptxas emits LDGs for c3, c2, c1, c0 in that order (offsets 0xc, 0x8, 0x4, 0x0). Stable across all variants. Not a performance concern; reflects ptxas allocation of R20-R23 in reverse.
+* [OBS] **IADD.64 accepts uniform register as source operand.** `IADD.64 R2, R2, -UR6` in 13e. Mixed R/UR operand forms are valid on SM120.
+### Compiler determinism
+* [OBS] ptxas produces byte-identical SASS for the portion of the kernel unrelated to a local source change. Between 13b and 13c (FP16 input vs BF16 input), 30 of 31 instructions are byte-identical; only the HMMA control code differs (bit 18).
+* [OBS] `LDG.E.CONSTANT` is emitted for any pointer marked `const __restrict__` in the kernel signature, not just for compile-time constant lookup tables. This extends the chapter 11 observation (Payne-Hanek table) to a general rule.
+### Canonical kernel MMA minimal template
+Stable across 13a, 13b, 13c, 13d (13e adds the CS2UR/CS2R bracket but otherwise follows the same template):
+```
+// Prologue (8 instructions)
+LDC R1, c[0x0][0x37c]                   ; stack
+S2R R_tid, SR_TID.X                      ; threadIdx
 
-[WIP] Populated after chapter 13a-13e are dumped and analyzed.
+// Pointer loads (one LDC.64 per kernel arg, 8-byte stride in param space)
+LDC.64 R_ptr_a, c[0x0][0x380]
+LDC.64 R_ptr_b, c[0x0][0x388]
+LDC.64 R_ptr_c, c[0x0][0x390]
+LDC.64 R_ptr_d, c[0x0][0x398]
+LDCU.64 UR_desc, c[0x0][0x358]           ; global descriptor
 
+// Stride computation (SHF per per-thread stride multiplier)
+SHF.L.U32 R_stride_ab, R_tid, K_ab, RZ
+SHF.L.U32 R_stride_cd, R_tid, K_cd, RZ
+
+// Address computation (IMAD.WIDE.U32 per pointer, destination placed late)
+IMAD.WIDE.U32 R_addr_a, R_stride_ab, 0x4, R_ptr_a
+IMAD.WIDE.U32 R_addr_b, ..., 0x4, R_ptr_b
+IMAD.WIDE.U32 R_addr_c, R_stride_cd, 0x4, R_ptr_c
+
+// Fragment loads
+LDG.E.CONSTANT R_b0, desc[UR_desc][R_addr_b]
+LDG.E.CONSTANT R_b1, desc[UR_desc][R_addr_b+0x4]
+// ... for all A, B, C registers
+
+IMAD.WIDE.U32 R_addr_d, R_stride_cd, 0x4, R_ptr_d   ; destination placed late
+
+// MMA
+HMMA.16816.<dtype> R_d, R_a, R_b, R_c
+
+// NOP pad (per-HMMA, if consumer depends on D)
+@!UPT UIADD3 URZ, UPT, UPT, URZ, URZ, URZ
+@!UPT UIADD3 URZ, UPT, UPT, URZ, URZ, URZ
+
+// Stores
+STG.E desc[UR_desc][R_addr_d], R_d_0
+// ... for all D registers
+
+// Epilogue
+EXIT
+BRA .                                    ; self-trap
+NOP (padding)
+```
+### Canonical MMA accumulator chaining
+From 13d, 13e:
+```
+HMMA1 D=R_acc, A, B.reuse, R_acc_in      ; .reuse on B if B reloaded by HMMA2
+2 × UIADD3 NOPs
+HMMA2 D=R_acc, A, B, R_acc               ; accumulator in-place: D registers = C registers
+2 × UIADD3 NOPs
+<next consumer>
+```
+Register allocation under MMA chaining:
+* D and C colocated (in-place accumulator)
+* A keeps its own distinct register block (re-read by each HMMA)
+* B keeps its own distinct register block
+* No D/A reuse (contrary to the single-MMA case)
+### Resolved hypotheses
+* [RES] HMMA opcode family confirmed as `HMMA.16816.<acc>[.<input>]` on SM120.
+* [RES] Distinction FP16/BF16 input: explicit `.BF16` suffix in cuobjdump, encoded via bit 18 of HMMA control code.
+* [RES] Register allocation rule: D/A colocated simple, D/C colocated chained.
+* [RES] `.reuse` on B in chained MMA confirmed across 13d, 13e.
+* [RES] 2 UIADD3 NOPs after HMMA emitted when consumer depends on D; absent when consumer is independent (e.g., CS2R in 13e's last HMMA).
+* [RES] HMMA is variable-latency with scoreboard (bits 26 SBS and 27 wait).
+* [RES] Serial HMMA.16816.F32 latency ≈ 35 cycles/HMMA on SM120. Model: `total_cycles ≈ 310 + 35 × N` for N-chain.
 ### Open questions
-
-* [HYP] SASS opcode for `mma.sync.aligned.m16n8k16.row.col.*`. Likely `HMMA` (Volta/Turing/Ampere heritage), to confirm on SM120.
-* [HYP] Whether the dtype information is in the opcode modifier, operand encoding, or both.
-* [HYP] Fragment layout preservation from PTX to SASS.
-* [HYP] MMA scoreboard usage: fixed-latency or variable-latency.
+* [HYP] HMMA latency for FP16 accumulator (13a variant) not measured.
+* [HYP] HMMA latency for BF16 input (13c variant) not measured.
+* [HYP] HMMA at other shapes (m16n8k8 or smaller) not tested. Opcode may change suffix or stay the same.
+* [HYP] Sensitivity of HMMA latency to input data (NaN, denormal, zero) not tested.
+* [HYP] HMMA throughput in independent (non-chained) configuration deferred to chapter 18.
+* [HYP] Why exactly 2 NOPs and not 1 or 3. Possibly related to a fixed scheduling slot quantum that remains between HMMA issue and scoreboard visibility.
+* [GAP] Specific scoreboard slot ID used by HMMA (SB0..SB5) not decoded.
+* [GAP] Low-order scheduling bits of HMMA control code (bits 0-4) not fully decoded.
+### New instructions observed in this chapter
+| Opcode | Usage |
+|---|---|
+| HMMA.16816.F16 | MMA warp-level, m16n8k16, FP16 input, FP16 accumulator |
+| HMMA.16816.F32 | MMA warp-level, m16n8k16, FP16 input (implicit), FP32 accumulator |
+| HMMA.16816.F32.BF16 | MMA warp-level, m16n8k16, BF16 input (explicit), FP32 accumulator |
+| CS2UR | Special-register to uniform-register read (observed for SR_CLOCKLO) |
+### New modifiers
+* `.16816` on HMMA: shape m16n8k16 (MNK concatenation)
+* `.F16` / `.F32` on HMMA: accumulator dtype
+* `.BF16` on HMMA: input dtype override (default is FP16)
+* `.reuse` on MMA B operand: reuse cache hint for next MMA that will re-read B
 
 ---
 
