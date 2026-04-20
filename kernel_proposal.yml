@@ -1,0 +1,52 @@
+name: Kernel study proposal
+description: Propose a new kernel study that extends the controlled variation methodology
+title: "[KERNEL] NN: short name"
+labels: ["contribution: kernel"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Propose a new kernel study. The maintainer will validate the scope before you write it. One minimal source variation per study.
+
+  - type: input
+    id: previous_kernel
+    attributes:
+      label: Previous kernel in the sequence
+      description: Which chapter does this one build on
+      placeholder: "05_vector_loop_fixed"
+    validations:
+      required: true
+
+  - type: textarea
+    id: variation
+    attributes:
+      label: Single variation introduced
+      description: What is the one minimal source change versus the previous kernel
+    validations:
+      required: true
+
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Expected observation
+      description: What do you expect to see in the SASS, and why
+    validations:
+      required: true
+
+  - type: textarea
+    id: justification
+    attributes:
+      label: Why this kernel matters
+      description: What SASS pattern or compiler decision does this isolate that is not yet covered
+    validations:
+      required: true
+
+  - type: dropdown
+    id: target_sm
+    attributes:
+      label: Target SM
+      options:
+        - sm_120 (maintainer hardware)
+        - other
+    validations:
+      required: true
