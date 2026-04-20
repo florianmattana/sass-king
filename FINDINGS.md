@@ -1018,20 +1018,178 @@ Register allocation under MMA chaining:
 
 ---
 
-## Kernel 14 QMMA FP8 (kind::f8f6f4, m16n8k32)
-
+## Kernel 14 QMMA FP8/FP6/FP4 baseline (kind::f8f6f4, m16n8k32)
+Chapter establishing the QMMA tensor core opcode family on SM120 — the SASS realization of `mma.sync.aligned.kind::f8f6f4.*` from PTX. Ten variants tested covering input dtypes (E4M3, E5M2, E3M2, E2M3, E2M1), accumulator dtypes (F32, F16), accumulator chaining, and serial latency microbenchmark. Encoding of the dtype field validated by Popper-style prediction.
 ### Variants and outcomes
-
-[WIP] Populated as chapter 14 progresses.
-
-### Key findings
-
-[WIP]
-
-### Open questions
-
-* [HYP] SASS delta between `mma.sync` and `mma.sync.kind::f8f6f4`. Opcode change (HMMA → QMMA?) or modifier only.
-* [HYP] FP8 packing into 32-bit registers.
+* [OBS] 14a (E4M3.E4M3 input, F32 acc, single MMA): baseline `QMMA.16832.F32.E4M3.E4M3`. 31 useful instructions. d[0] = 32.0.
+* [OBS] 14b (E4M3.E5M2 input, F32 acc): `QMMA.16832.F32.E4M3.E5M2`. d[0] = 32.0. Bytes opcode identical to 14a; control code differs by bit 15 (B "mantissa ≠ 3" flag).
+* [OBS] 14c (E5M2.E5M2 input, F32 acc): `QMMA.16832.F32.E5M2.E5M2`. d[0] = 32.0. Adds bit 14 set (A symmetric to bit 15 for B).
+* [OBS] 14d (E2M1.E2M1 input, F32 acc): `QMMA.16832.F32.E2M1.E2M1`. d[0] = 2.0 (expected 32.0 — see [GAP-14d-1]). Adds bits 19, 21 set for FP4 family.
+* [OBS] 14e (E4M3.E4M3 input, F32 acc, two chained MMAs with D1 feeding C2): 2 × `QMMA.16832.F32.E4M3.E4M3`. 37 useful instructions (+6 vs 14a). d[0] = 64.0.
+* [OBS] 14f (N chained MMAs with clock64() bracketing for latency, N=16/32/64): unrolled chain. Measurements: 1070/1637/2742 total cycles. Linear model: total_cycles ≈ 510 + 35 × N.
+* [OBS] 14g (E3M2.E3M2 input, F32 acc): `QMMA.16832.F32.E3M2.E3M2`. d[0] = 0.0 (zero inputs). Adds bits 18, 20 set for FP6 family E3M2.
+* [OBS] 14h (E2M3.E2M3 input, F32 acc): `QMMA.16832.F32.E2M3.E2M3`. d[0] = 0.0. Bits 14, 15 clear (E2M3 has mantissa = 3 like E4M3); bits 19, 21 set (E2M3 has exp = 2). Invalidates a naive "alt dtype = bit 14/15" model and reveals a 3-bit-per-operand encoding.
+* [OBS] 14i (E4M3.E2M1 mixed input, F32 acc, Popper test): `QMMA.16832.F32.E4M3.E2M1`. d[0] = 0.0. Predicted control code from the model (`0x004ff6000020ac14`) matches observed exactly. Validates the encoding as scientifically robust.
+* [OBS] 14j (E4M3.E4M3 input, F16 acc): `QMMA.16832.F16.E4M3.E4M3`. d[0] = 0x50005000 (two FP16 32.0 packed). Layout 2-4-2-2 (D and C are 2 registers each instead of 4). Identifies bits 1, 2, 13 as accumulator dtype encoding.
+### Toolchain note
+* [RES] PTX feature `.kind::f8f6f4` requires `-arch=compute_120a -code=sm_120a`. The shortcut `-arch=sm_120a` is not accepted by nvcc 13.2 (must use the explicit compute/code form). Plain `-arch=sm_120` rejects with `Feature '.kind::f8f6f4' not supported on .target 'sm_120'`. This applies to the full kind::f8f6f4 family, not only block-scaled variants. Resolves [HYP→?] from FINDINGS skeleton ("block-scaled MMA requires sm_120a").
+* [OBS] Output binaries compiled for sm_120a carry `EF_CUDA_ACCELERATORS` in their elf header. Marker for any kernel using sm_120a-specific PTX features.
+### Key observations
+* [OBS] **QMMA opcode family** on SM120: `QMMA.16832.<acc>.<inputA>.<inputB>`. Shape modifier `.16832` is the M×N×K concatenation (m16n8k32). Accumulator dtype suffix mandatory. Both input dtypes explicit (no implicit default), unlike HMMA where FP16 is implicit.
+* [OBS] **QMMA is a distinct opcode family from HMMA**, not an extension. Opcode bytes differ in bit pattern (HMMA `0x...723c`, QMMA `0x...727a`).
+* [OBS] **QMMA covers FP8, FP6, and FP4** — the entire kind::f8f6f4 family is one opcode with dtype distinction in the control code.
+* [OBS] **Opcode bytes invariant across input dtypes**: `0x000000100c0c727a` for variants 14a, b, c, d, g, h, i (when operand bases match). Dtype encoding lives entirely in the control code.
+* [OBS] **Opcode bytes invariant across accumulator dtypes too**: 14j (F16 acc) shares the same opcode bytes as 14a (F32 acc) when operand bases match, despite the C base differing (R20 in 14a, R18 in 14j). Suggests opcode bytes encode {D, A, B} bases but not C base. C base lives in the control code. Not formally verified.
+### Control code topology — fully decoded
+* [OBS] By comparing 10 variants byte-by-byte, **13 bits of the QMMA control code have been decoded**:
+| Bit | Meaning | Evidence |
+|---|---|---|
+| 1 | Acc dtype = F16 | 14j vs 14a |
+| 2 | Acc dtype = F32 | 14j vs 14a |
+| 4 | Always set on QMMA | invariant across all variants |
+| 10, 11 | Always set on QMMA (MMA family marker) | invariant |
+| 13 | F32 acc auxiliary bit | 14j vs 14a |
+| 14 | A input mantissa ≠ 3 | 14b/c/d/g/h/i |
+| 15 | B input mantissa ≠ 3 | 14b/c/d/g/h/i |
+| 18 | A input exp = 3 (E3M2) | 14g |
+| 19 | A input exp = 2 (E2M3, E2M1) | 14d/h |
+| 20 | B input exp = 3 (E3M2) | 14g |
+| 21 | B input exp = 2 (E2M3, E2M1) | 14d/h |
+| 26 | MMA scoreboard set (SBS) | 14e/f |
+| 27 | MMA scoreboard wait | 14e/f |
+### Input dtype encoding model (3 bits per operand, validated)
+* [OBS] Each input operand is encoded by **3 independent bits in the control code**:
+  * For operand A: bits 14, 18, 19
+  * For operand B: bits 15, 20, 21
+  * Bit "mantissa ≠ 3" = 1 if mantissa is 1 or 2 (E5M2, E3M2, E2M1)
+  * Bit "exp = 3" = 1 if exponent bits = 3 (E3M2 only)
+  * Bit "exp = 2" = 1 if exponent bits = 2 (E2M3, E2M1)
+* [OBS] **Encoding fully orthogonal A/B**, no inter-operand interaction. Hardware uses 5 of 8 possible 3-bit codepoints, leaving room for future format extensions.
+* [OBS] **Codepoint mapping**:
+| dtype | exp | mant | bit (mant≠3) | bit (exp=3) | bit (exp=2) | binary code |
+|---|---|---|---|---|---|---|
+| E4M3 | 4 | 3 | 0 | 0 | 0 | 000 (default) |
+| E5M2 | 5 | 2 | 1 | 0 | 0 | 100 |
+| E3M2 | 3 | 2 | 1 | 1 | 0 | 110 |
+| E2M3 | 2 | 3 | 0 | 0 | 1 | 001 |
+| E2M1 | 2 | 1 | 1 | 0 | 1 | 101 |
+* [RES] **Validation by Popper-style prediction (14i)**: the model derived from 5 symmetric variants predicted ctrl = `0x004ff6000020ac14` for the asymmetric mixed case E4M3 × E2M1. Observed value matched **exactly**. The encoding is scientifically robust.
+* [HYP] **Architectural interpretation**: the encoding suggests SM120 tensor core has MAC units organized by exponent class (4, 3, 2) with a sub-mode for mantissa-3 vs alternative mantissa widths. Consistent with a unified FP8/FP6/FP4 hardware that selects internal datapath via these 3 bits per operand.
+### Accumulator dtype encoding (MMA-family wide)
+* [OBS] By comparing 14j (F16 acc) to 14a (F32 acc), the accumulator dtype encoding emerges:
+  * Bit 1 = 1 if accumulator is F16
+  * Bit 2 = 1 if accumulator is F32
+  * Bit 13 (QMMA) or bit 12 (HMMA) is an auxiliary bit set in F32 mode
+* [RES] **This encoding is identical between HMMA and QMMA**. Comparing chapter 13a (HMMA F16, ctrl 0x004ff60000000812) to 13b (HMMA F32, ctrl 0x004ff60000001814) reveals the same bits 1, 2 transition. The accumulator dtype encoding is a 9th MMA-family wide invariant.
+### Register allocation patterns (MMA-family wide)
+* [OBS] **Single MMA, D smaller than A** (14j FP16 acc): D and A colocated with partial overlap. D = R12:R13 (2 regs), A = R12:R15 (4 regs). Mirrors HMMA pattern from 13a.
+* [OBS] **Single MMA, D equal to A in size** (14a, 14b, 14c, 14d, 14g, 14h, 14i, all F32 acc): D and A colocated with complete overlap. Same 4 registers. Mirrors HMMA pattern from 13b.
+* [OBS] **Chained MMA** (14e): D and C colocated (accumulator in-place). A keeps its own distinct register block because A is re-read by each QMMA. B keeps its own distinct register block. Mirrors HMMA pattern from 13d.
+* [OBS] Fragment register counts per thread:
+  * F32 acc (14a-i): D = float[4], A = uint32[4], B = uint32[2], C = float[4]
+  * F16 acc (14j): D = uint32[2], A = uint32[4], B = uint32[2], C = uint32[2]
+* [OBS] A and B register counts are independent of input dtype. Element packing within each uint32 changes (4 e4m3, 8 e2m1, etc.) but ptxas always uses the same number of registers.
+### Chaining patterns (14e, MMA-family wide)
+* [OBS] Two chained QMMAs produce SASS analogous to 13d for HMMA:
+  ```
+  QMMA #1: R16, R12, R10.reuse, R16    ctrl 0x084ff60000002c10
+  2 × @!UPT UIADD3 NOPs
+  QMMA #2: R16, R12, R10, R16          ctrl 0x000ff60000002c10
+  2 × @!UPT UIADD3 NOPs
+  ```
+* [OBS] `.reuse` on B operand of every QMMA except the last in chain.
+* [OBS] 2 UIADD3 NOPs after each QMMA when consumer depends on D.
+* [OBS] D and C colocated (accumulator in-place).
+* [OBS] A on a distinct register block, re-read by each QMMA in the chain.
+### Scoreboard scheme (14e, 14f, MMA-family wide)
+* [OBS] The scoreboard high-byte encoding is **byte-identical** between HMMA chains (chapter 13e) and QMMA chains (14e, 14f):
+  * First MMA of chain (sets scoreboard): `0x084ff6...` — bits 26 (SBS) + 27 (wait) set
+  * Mid-chain MMAs (wait on scoreboard): `0x080ff6...` — bit 27 only
+  * Last MMA in chain (no MMA-consumer after): `0x000ff0...` — neither bit set
+* [RES] **MMA scoreboard scheme is fully MMA-family wide**.
+### Latency measurement (14f)
+* [OBS] Three measurements at N = 16, 32, 64 chained QMMAs (each with accumulator in-place to force serial dependency):
+| N | total_cycles | cycles/QMMA |
+|---|---|---|
+| 16 | 1070 | 66.88 |
+| 32 | 1637 | 51.16 |
+| 64 | 2742 | 42.84 |
+* [OBS] Linear regression on incremental costs:
+  * ΔN(16→32): 567 cycles for 16 added QMMAs → 35.4 cycles/QMMA
+  * ΔN(32→64): 1105 cycles for 32 added QMMAs → 34.5 cycles/QMMA
+* [RES] **Latency model**: `total_cycles ≈ 510 + 35 × N`.
+* [RES] **Marginal cost identical to HMMA**: ~35 cycles/QMMA on SM120, identical to the ~35 cycles/HMMA observed in chapter 13e for HMMA.16816.F32.
+* [OBS] **Striking observation**: QMMA m16n8k32 performs **2× more FMAs internally** than HMMA m16n8k16 (k=32 vs k=16), yet completes in the same serial latency. **Effective FMA throughput per cycle is 2× higher for FP8 QMMA than for FP16 HMMA**, consistent with Blackwell consumer FP8 throughput specs.
+* [OBS] **Fixed chain overhead +200 cycles vs HMMA**: ~510 for QMMA vs ~310 for HMMA. Likely reflects deeper pipeline startup for FP8 MAC units. Amortized in production GEMM (N >> 100).
+* [HYP] The +200 cycles overhead may include initialization of the FP8/FP6/FP4 unified MAC datapath, which has more configurability than the FP16-only HMMA path.
+### Comparison HMMA vs QMMA
+| | HMMA.16816.F32 | QMMA.16832.F32.E4M3.E4M3 |
+|---|---|---|
+| Shape | m16n8k16 | m16n8k32 |
+| Operand bases | D, A, B, C | D, A, B, C |
+| Internal FMA count | 256 (16×8×16 / 32 lanes × 2) | 512 (16×8×32 / 32 lanes × 2) — 2× higher |
+| Serial latency / MMA | ~35 cycles | ~35 cycles |
+| Effective FMA throughput per cycle | 7.3 | 14.6 — 2× higher |
+| Chain fixed overhead | ~310 cycles | ~510 cycles |
+| Scoreboard scheme | bits 26 SBS, 27 wait | identical |
+| `.reuse` on B in chain | except last | identical |
+| NOPs around MMA | 2 UIADD3 if D dependency | identical |
+| Acc dtype encoding | bits 1, 2 | identical |
+### MMA-family wide invariants (9 confirmed)
+After chapter 14, the following patterns are confirmed common to HMMA and QMMA. They should be treated as MMA-family wide rather than opcode-specific:
+1. **Single-MMA register allocation**: D and A colocated (with partial overlap when D < A in size).
+2. **Chained-MMA register allocation**: D and C colocated. A and B on distinct bases.
+3. **`.reuse` on B operand** of every MMA in a chain except the last.
+4. **2 UIADD3 NOPs** after each MMA when the consumer depends on D.
+5. **MMA scoreboard scheme**: bit 26 (SBS) on first MMA of chain, bit 27 (wait) on dependent MMAs.
+6. **Inverted LDG order** for one operand (B or C depending on kernel).
+7. **Late destination address**: IMAD.WIDE for store address placed just before the MMA.
+8. **Template kernel structure**: prologue + LDG fragments + MMA + NOPs + STG, byte-identical between HMMA and QMMA when operand sizes match.
+9. **Accumulator dtype encoding**: bit 1 = F16 acc, bit 2 = F32 acc.
+### Resolved hypotheses
+* [RES] QMMA is a new opcode family distinct from HMMA, not an extension. Confirmed by 14a vs HMMA dumps (different opcode bytes).
+* [RES] QMMA opcode bytes are invariant across input dtypes (6 variants tested) and accumulator dtypes (when operand bases match).
+* [RES] QMMA covers the full kind::f8f6f4 family (FP8, FP6, FP4) with one opcode.
+* [RES] Input dtype encoding is per-operand symmetric and orthogonal A/B (Popper test 14i).
+* [RES] QMMA serial latency ~35 cycles/QMMA, identical to HMMA. Model `total_cycles ≈ 510 + 35 × N`.
+* [RES] Accumulator dtype encoding (bits 1 = F16, 2 = F32) is identical HMMA/QMMA.
+* [RES] Chaining patterns identical HMMA/QMMA.
+* [RES] Scoreboard scheme identical HMMA/QMMA.
+* [RES] PTX `.kind::f8f6f4` requires sm_120a, not sm_120 standard.
+### Open gaps
+* [GAP-14d-1] **FP4 fragment layout unknown**. Variant 14d returned d[0] = 2.0 instead of expected 32.0 with naive `0x22222222` packing. The SASS observation (opcode, control code) is unaffected, but productive use of FP4 inputs requires the actual SM120 FP4 fragment layout. To investigate in a dedicated chapter for production FP4 attention.
+* [GAP-14e-1] **Single-MMA vs chain-last control code delta**. Some bits beyond 26/27 differ between a single QMMA (14a) and a chain-last QMMA (14e #2). Possibly scoreboard slot ID encoding. Not decoded.
+* [GAP] **Shape encoding bits**. The bits encoding m16n8k32 (vs hypothetical other shapes) cannot be isolated until another shape is tested. Currently mixed with acc dtype bits in the 10-13 zone.
+* [GAP] **Block-scaled MMA (kind::mxf8f6f4)** not tested. Deferred to chapter 16 (block-scaled FP4 peak).
+* [GAP] **Other QMMA shapes** not tested. m16n8k32 only.
+* [GAP] **C base in opcode bytes**. Hypothesis [HYP-14j-A] that C base is not in opcode bytes (lives in control code) is consistent with 14a/14j observation but not directly tested.
+### New instructions observed in this chapter
+| Opcode | Usage |
+|---|---|
+| QMMA.16832.F32.E4M3.E4M3 | MMA m16n8k32, both inputs E4M3, FP32 accumulator |
+| QMMA.16832.F32.E4M3.E5M2 | MMA m16n8k32, mixed E4M3/E5M2, FP32 acc |
+| QMMA.16832.F32.E5M2.E5M2 | MMA m16n8k32, both E5M2, FP32 acc |
+| QMMA.16832.F32.E2M1.E2M1 | MMA m16n8k32, both FP4 e2m1, FP32 acc |
+| QMMA.16832.F32.E3M2.E3M2 | MMA m16n8k32, both FP6 e3m2, FP32 acc |
+| QMMA.16832.F32.E2M3.E2M3 | MMA m16n8k32, both FP6 e2m3, FP32 acc |
+| QMMA.16832.F32.E4M3.E2M1 | MMA m16n8k32, mixed E4M3/E2M1 (FP8/FP4), FP32 acc |
+| QMMA.16832.F16.E4M3.E4M3 | MMA m16n8k32, both E4M3, FP16 accumulator |
+### New modifiers
+* `.16832` on QMMA: shape m16n8k32 (MNK concatenation, k doubled vs HMMA m16n8k16)
+* `.F16` / `.F32` on QMMA: accumulator dtype
+* `.E4M3`, `.E5M2`, `.E3M2`, `.E2M3`, `.E2M1` on QMMA: input dtype suffixes (both A and B explicit)
+* `.reuse` on QMMA B operand: same as HMMA, reuse cache hint for chained MMAs
+### Diagnostic workflow for QMMA
+When you see a QMMA in a production kernel:
+1. **Identify the dtype** from the mnemonic: `QMMA.16832.<acc>.<inputA>.<inputB>`. Both inputs are explicit.
+2. **Verify the opcode bytes** start with `0x000000??0c0c727a` (or similar with operand-base substitutions). Confirms QMMA opcode family.
+3. **Decode the input dtype bits** in the control code (bits 14-15 for "alt mantissa", 18-21 for exp class).
+4. **Check the chaining context** via control code high bytes:
+  * `0x084ff6...` = first of chain (sets scoreboard)
+  * `0x080ff6...` = mid-chain (waits on scoreboard)
+  * `0x000ff0...` = last (no wait, consumer is non-MMA)
+5. **Look at the surrounding NOPs**: 2 UIADD3 NOPs after each QMMA when its D feeds another instruction.
+6. **Check for `.reuse` on B**: signals chain context.
 
 ---
 
