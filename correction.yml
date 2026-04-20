@@ -1,0 +1,35 @@
+name: Correction
+description: Report an error in existing content (FINDINGS, conclusions, reference docs)
+title: "[FIX] brief description"
+labels: ["contribution: correction"]
+body:
+  - type: input
+    id: file_path
+    attributes:
+      label: File path
+      placeholder: "05_vector_loop_fixed/conclusions.md"
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_text
+    attributes:
+      label: Current text
+      description: Quote the exact sentence or passage that is incorrect
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_text
+    attributes:
+      label: Proposed correction
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: SASS line, NCU metric, official documentation reference, or microbenchmark result
+    validations:
+      required: true
