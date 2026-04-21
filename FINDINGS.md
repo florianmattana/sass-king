@@ -1343,9 +1343,138 @@ When auditing a GEMM or attention kernel:
 
 ---
 
-## Kernel 18 Pipelined MMA tile
-
-[WIP]
+## Kernel 18 Pipelined MMA tile with cp.async on SM120
+Chapter establishing the production GEMM pipeline pattern on SM120 via cp.async. Three variants: 2-stage full unroll, K-loop 4 tiles with 2-stage pipeline, 3-stage pipeline. Three new SASS opcodes decoded: LDGSTS (cp.async), LDGDEPBAR (commit_group), DEPBAR.LE SB0, N (wait_group N). Production pattern prologue → loop body → tail → epilogue fully captured.
+### Variants and outcomes
+* [OBS] 18a (2-stage unrolled, 2 tiles): full 2-stage pipeline, tile 0 + tile 1 prefetched then consumed. d[0] = 32.0. Reveals LDGSTS.E.LTC128B.128, LDGDEPBAR, DEPBAR.LE SB0, N opcodes. 164 lines SASS.
+* [OBS] 18b (K-loop 4 tiles with `#pragma unroll 1`, 2-stage pipeline): real SASS loop with BRA back-edge at 0x0470, counter R0 with ISETP.NE.U32.AND comparison to K-1. d[0] = 64.0. 228 lines SASS. Register spill observed (STL.64/LDL).
+* [OBS] 18c (3-stage pipeline, 3 tiles unrolled): 3 × LDGSTS + 3 × LDGDEPBAR, then 3 × DEPBAR.LE SB0 with N = 2, 1, 0. d[0] = 48.0. 196 lines SASS. Decodes the N argument encoding.
+### New opcodes discovered
+* [OBS] `LDGSTS.E.LTC128B.128` is the SASS realization of PTX `cp.async.ca.shared.global.L2::128B`. Low byte `0xae` family. Distinct from LDG (`0x81`), STS (`0x88`), LDS (`0x84`).
+  * Mnemonic: "Load Global Store Shared"
+  * `.E` = Extended (64-bit addressing)
+  * `.LTC128B` = L2 cache hint, 128-Byte alignment
+  * `.128` = 128-bit transfer (16 bytes per thread)
+* [OBS] `LDGDEPBAR` is the SASS realization of PTX `cp.async.commit_group`. No operands. Opcode bytes `0x00000000000079af`. Mnemonic "Load Global Dependency Barrier". Establishes ordering w.r.t. previously issued LDGSTS.
+* [OBS] `DEPBAR.LE SB0, N` is the SASS realization of PTX `cp.async.wait_group N`. Blocks until <= N commit groups remain in flight in scoreboard bank 0.
+### DEPBAR.LE N encoding (decoded from 18c)
+* [OBS] Three DEPBAR.LE instances observed with distinct N values:
+  ```
+  DEPBAR.LE SB0, 0x0    ctrl 0x000080000000791a
+  DEPBAR.LE SB0, 0x1    ctrl 0x000080400000791a
+  DEPBAR.LE SB0, 0x2    ctrl 0x000080800000791a
+  ```
+* [OBS] N is encoded as a **2-bit field in bits 38-39** of the DEPBAR.LE control code:
+  * N=0: bits (38, 39) = (0, 0) → byte 4 = 0x00
+  * N=1: bits (38, 39) = (1, 0) → byte 4 = 0x40
+  * N=2: bits (38, 39) = (0, 1) → byte 4 = 0x80
+  * N=3: bits (38, 39) = (1, 1) → byte 4 = 0xC0 (predicted)
+* [HYP] Max N = 3 (four in-flight groups possible). Beyond this, must use DEPBAR.LE with N=0 (wait all).
+### Scoreboard bank 0 for cp.async
+* [OBS] All DEPBAR.LE instances observed target **SB0** (scoreboard bank 0). This is the async-copy dedicated bank on SM120.
+* [HYP] Other scoreboard banks (SB1, SB2, etc.) may exist for other async operations (TMA on SM90+, tcgen05.mma on SM100+) but are not observed on SM120 with the tested kernels.
+### Production pipeline pattern
+* [OBS] The canonical production GEMM structure observed across 18a/b/c:
+  ```
+  Prologue:
+    CS2R R_acc, SRZ                            # initialize accumulator to zero
+    compute addresses
+    @!PT LDS RZ × 3                            # scheduling hints
+    LDGSTS tile[0]
+    LDGDEPBAR                                  # commit group 0
+  
+  Main loop (k = 0 .. K-2):
+    compute next tile address
+    @!PT LDS RZ × 3
+    LDGSTS tile[k+1]
+    LDGDEPBAR
+    DEPBAR.LE SB0, 0x1                         # wait tile k
+    BAR.SYNC.DEFER_BLOCKING 0x0
+    LDSM.x2 B tile[k]                          # ptxas emits B before A
+    LDSM.x4 A tile[k]
+    HMMA (accumulate into R_acc)
+    UIADD3 NOPs × 2
+    counter++, compare, BRA back
+  
+  Tail:
+    DEPBAR.LE SB0, 0x0                         # wait all remaining
+    BAR.SYNC
+    LDSM.x2 B tile[K-1]
+    LDSM.x4 A tile[K-1]
+    HMMA (final, D renamed for STG)
+    UIADD3 NOPs × 2
+  
+  Epilogue:
+    STG × N
+    EXIT
+  ```
+### Key patterns cristallized
+* [OBS] **ptxas software pipelining** is aggressive: in 18a, LDSM of tile 1 is emitted BEFORE the HMMA of tile 0. This hides LDSM latency (~33 cycles) behind HMMA compute (~35 cycles). What CUTLASS tries to achieve manually is automatic when dependencies are clear.
+* [OBS] **ptxas inverts LDSM emission order A/B**: systematically `LDSM.x2` (B fragment, smaller) before `LDSM.x4` (A fragment, larger). Observed in 17e, 18a, 18b, 18c. Likely to give the larger load more time to complete before the consuming HMMA needs both.
+* [OBS] **Real SASS loop with `#pragma unroll 1`**: 18b has a counter register (R0), `ISETP.NE.U32.AND P1, PT, R0, 0x3, PT` comparison, and `@P1 BRA 0x2b0` back-edge. The loop iterates 3 times, each doing one prefetch + one compute, with a tail for the last tile.
+* [OBS] **Double-buffer addressing via LOP3.LUT**: buffer parity toggle using bitwise operations. `LOP3.LUT R, R, 0x1, RZ, 0xc0, !PT` (AND with 1 for current buffer), `LOP3.LUT R, R, 0x1, RZ, 0x3c, !PT` (XOR with 1 for next buffer).
+* [OBS] **Accumulator zero-initialization via CS2R**: `CS2R R_acc, SRZ` used systematically at start of GEMM kernels. More efficient than 4 × `MOV R, RZ` for a 4-register clear.
+* [OBS] **Register spill in pipelined GEMM** (18b): `STL.64 [R1], R2` and corresponding `LDL` instructions. Register pressure is high in pipelined kernels with dual buffers + accumulator + LDSM/HMMA sources. Could potentially be mitigated with `__launch_bounds__` or restructuring.
+* [OBS] **HMMA wait mask varies by context**:
+  * 17e HMMA (LDSMs directly): wait mask 0xff (byte 0 of control code)
+  * 18b HMMA (LDSMs after LDGSTS chain): wait mask 0x04
+  * The mask adapts to active scoreboard slots at HMMA execution time.
+### Unresolved pattern: `@!PT LDS RZ, [RZ]` triplet
+* [OBS] Before every LDGSTS instruction, ptxas emits **3 × `@!PT LDS RZ, [RZ]`** (always-false predicated LDS with zero destination and zero source).
+* [OBS] Pattern appears in all three variants (18a, 18b, 18c), always in groups of 3, always before a LDGSTS.
+* [HYP] Likely a scheduling hint or pipeline alignment marker specific to cp.async context. Not observed in cp.async-free LDSM kernels (17a-17e).
+* [GAP-18-1] The exact role and mechanism of the `@!PT LDS RZ` triplet remains undecoded.
+### Resolved hypotheses
+* [RES] cp.async maps to a new SASS opcode (LDGSTS.E.LTC128B.128)
+* [RES] commit_group emits a distinct opcode (LDGDEPBAR, no operands)
+* [RES] wait_group N emits DEPBAR.LE with N in control code
+* [RES] N is encoded as a 2-bit field in DEPBAR.LE control code bits 38-39
+* [RES] ptxas software-pipelines LDSM and MMA when dependencies allow
+* [RES] `#pragma unroll 1` produces a real SASS loop with BRA back-edge
+* [RES] 3-stage pipeline uses DEPBAR.LE with N = 2, 1, 0 successively
+* [RES] ptxas always emits LDSM.x2 before LDSM.x4 in MMA-consuming context
+### Open gaps
+* [GAP-18-1] `@!PT LDS RZ, [RZ]` triplet role before LDGSTS not decoded.
+* [GAP] Scoreboard banks other than SB0 not observed (SB1, SB2, etc. may be used by TMA on SM90+ or tcgen05 on SM100+).
+* [GAP] LDGSTS latency not microbenchmarked (depends on L2 hit rate and bandwidth, less informative than MMA cycle count).
+* [GAP] Other cp.async variants (`cp.async.cg.*`, non-L2 hint) not tested. Different caching modes may emit different LDGSTS variants.
+* [GAP] Direct comparison with CUTLASS SM120 GEMM SASS not done. Would validate decoded patterns against production code.
+### New instructions observed in this chapter
+| Opcode | Usage |
+|---|---|
+| LDGSTS.E.LTC128B.128 | cp.async.ca.shared.global.L2::128B, 16-byte transfer |
+| LDGDEPBAR | cp.async.commit_group |
+| DEPBAR.LE SB0, N | cp.async.wait_group N (N in {0, 1, 2, 3}) |
+| CS2R R, SRZ | Efficient accumulator zero-init (already observed in chap 13e for latency setup) |
+### New modifiers
+* `.E` on LDGSTS: Extended 64-bit addressing
+* `.LTC128B` on LDGSTS: L2 cache hint at 128-Byte alignment
+* `.128` on LDGSTS: 128-bit transfer size
+* `SB0` on DEPBAR.LE: scoreboard bank 0 (cp.async dedicated bank)
+* `.LE` on DEPBAR: less-or-equal comparison mode for wait count
+### Toolkit completion after chapter 18
+With chapters 13 (HMMA), 14 (QMMA), 17 (LDSM), and 18 (cp.async pipeline), the repo has decoded every opcode needed to audit a production GEMM or attention kernel on SM120:
+| Pattern | Opcode | Chapter |
+|---|---|---|
+| Global load | LDG.E.* | 08 |
+| Shared store | STS.* | 06 |
+| cp.async | LDGSTS.E.LTC128B.128 | 18 |
+| Commit async | LDGDEPBAR | 18 |
+| Wait async | DEPBAR.LE SB0, N | 18 |
+| Barrier | BAR.SYNC.DEFER_BLOCKING 0x0 | 06 |
+| Load matrix | LDSM.16.M[T]88[.N] | 17 |
+| Tensor core FP16 | HMMA.16816.F32 | 13 |
+| Tensor core FP8/FP6/FP4 | QMMA.16832.<acc>.<A>.<B> | 14 |
+| Global store | STG.E.* | 08 |
+### Diagnostic workflow for pipelined GEMM in production
+When auditing a production SASS dump:
+1. Locate LDGSTS instructions — they cluster near the top of the kernel and inside the main loop.
+2. Count LDGDEPBAR to identify pipeline stages (N stages = N commit groups per iteration setup).
+3. Examine DEPBAR.LE byte 4: N value indicates how many groups are allowed to remain in flight.
+4. Check for BRA back-edge: presence indicates a real SASS loop vs full unroll.
+5. Count HMMA instructions: typically one per K-loop iteration, plus any tail.
+6. Verify `.reuse` on B operand of each HMMA except the last (chain pattern).
+7. LDGSTS to HMMA latency per tile = ~L2 access + ~33 (LDSM) + ~35 (HMMA). Pipeline hides this if next tile's LDGSTS is issued early enough.
 
 ---
 
