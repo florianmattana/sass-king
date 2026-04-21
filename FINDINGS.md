@@ -1199,15 +1199,111 @@ When you see a QMMA in a production kernel:
 
 ---
 
-## Kernel 16 FP4 peak (k=64 block-scaled)
+## Kernel 16 FP4 peak block-scaled MMA on SM120
+Chapter decoding the block-scaled MMA family on SM120: kind::mxf8f6f4 (k=32) and kind::mxf4nvf4 (k=64). Four variants: mxf8f6f4 baseline, mxf4nvf4 standard (2X ue8m0), mxf4nvf4 peak (4X ue4m3), and latency microbench on the peak path. Reveals a new SASS opcode family OMMA distinct from HMMA and QMMA, completing the SM120 tensor core landscape.
+### Variants and outcomes
+* [OBS] 16a (mxf8f6f4, scale_vec::1X, m16n8k32, e4m3 inputs, ue8m0 scales): d[0] = 32.0 (matches 14a baseline). Reveals `QMMA.SF.16832.F32.E4M3.E4M3.E8` — existing QMMA opcode with new `.SF` modifier. 123 lines SASS.
+* [OBS] 16b (mxf4nvf4, scale_vec::2X, m16n8k64, e2m1 inputs, ue8m0 scales): d[0] = 0.0 (zero inputs). Reveals NEW opcode `OMMA.SF.16864.F32.E2M1.E2M1.E8` with low byte `0x7f`. 123 lines SASS.
+* [OBS] 16c (mxf4nvf4, scale_vec::4X, m16n8k64, e2m1 inputs, ue4m3 scales): d[0] = 0.0. Reveals `OMMA.SF.16864.F32.E2M1.E2M1.UE4M3.4X` — same OMMA opcode with new `.UE4M3.4X` modifier suffix. 123 lines SASS. This is the announced 900+ TFLOPS FP4 peak path.
+* [OBS] 16d (OMMA 4X latency chain, N = 16/32/64): cycles/MMA measured. Linear fit total_cycles(N) = 330 + 29 × N. Asymptotic cycles/MMA = **~29**, lower than HMMA/QMMA (~35).
+### New SASS opcode family: OMMA
+* [OBS] `OMMA.SF.16864.F32.<A>.<B>.<scale_dtype>[.<scale_vec>]` is a new opcode family on SM120, low byte `0x7f`. Distinct from QMMA (`0x7a`) and HMMA (`0x3c`).
+* [OBS] OMMA shape is always m16n8k64 (k=64). Used exclusively for `kind::mxf4nvf4` PTX.
+* [HYP] The "O" in OMMA presumably stands for "Octal" (FP4 packs 8 values per uint32) or references the doubled k dimension.
+### Complete SM120 MMA opcode landscape
+After chapters 13, 14, 16:
+| Family | Low byte | Shape | PTX kind | Scaled? |
+|---|---|---|---|---|
+| HMMA | 0x3c | m16n8k16 | mma.sync standard | No |
+| QMMA | 0x7a | m16n8k32 | kind::f8f6f4, kind::mxf8f6f4 | Optional (.SF modifier) |
+| **OMMA** | **0x7f** | m16n8k64 | kind::mxf4nvf4 | Always (implicit .SF) |
+The low byte of the opcode is a reliable family identifier.
+### Block-scaled SASS mnemonic structure
+* [OBS] `<FAMILY>.SF.<shape>.<acc_dtype>.<A_dtype>.<B_dtype>.<scale_dtype>[.<scale_vec_tag>]`
+* [OBS] `.SF` modifier = Scale Factor enabled (block scaling mode).
+* [OBS] Scale dtype abbreviation:
+  * `.E8` = ue8m0 (unsigned, 8-bit exp, 0 mantissa) — the common case, tagged short
+  * `.UE4M3` = ue4m3 (unsigned, 4-bit exp, 3-bit mantissa) — explicit full notation
+* [OBS] scale_vec convention:
+  * `scale_vec::1X` is default for QMMA → silent (not tagged)
+  * `scale_vec::2X` is default for OMMA → silent (not tagged)
+  * `scale_vec::4X` is not default → explicit `.4X` tag required
+### Operand layout for block-scaled MMA
+* [OBS] 7 operands in the SASS mnemonic: D, A, B, C, SFA, SFB, URZ
+  * SFA, SFB = scale factor registers (single uint32 each, with packed scale values for 2X and 4X modes)
+  * URZ = uniform register zero, placeholder for the bidA/tidA/bidB/tidB parameters (constants = 0 in CUTLASS atoms)
+* [OBS] When SFA and SFB have equal values, ptxas colocates them in the same register (register reuse optimization).
+### Control code encoding of scaling mode
+* [OBS] Block-scaled variants share identical opcode bytes `0x7000000a0c0c747f` for all OMMA modes. **The scaling configuration (scale_vec + scale_dtype) lives entirely in the control code, byte 2 (bits 16-23).**
+* [OBS] Observed byte 2 values:
+  * 16a (QMMA.SF 1X ue8m0): byte 2 = 0x00
+  * 16b (OMMA.SF 2X ue8m0): byte 2 = 0x08 (bit 19 set)
+  * 16c (OMMA.SF 4X ue4m3): byte 2 = 0x04 (bit 18 set)
+* [HYP] Two candidate decodings:
+  * Direct mapping: each (scale_vec, scale_dtype) pair has a unique byte 2 value
+  * Orthogonal bits: bit 19 = scale_vec::2X indicator, bit 18 = ue4m3+4X fine-grained indicator
+* [GAP] Cannot disambiguate without testing mxf4nvf4 4X with ue8m0 (not a CUTLASS atom). Both interpretations match the 3 observed variants.
+### OMMA latency and FLOPs/cycle (16d)
+* [OBS] OMMA.SF 4X ue4m3 serial chain latency measured at N = 16, 32, 64.
+* [OBS] Linear model: total_cycles(N) = 330 + 29 × N.
+* [OBS] Asymptotic cycles/MMA = ~29.
+* [OBS] Cross-family comparison of chain-latency throughput:
 
-[WIP]
+| Opcode | Shape | FLOPs/MMA | Cycles/MMA | FLOPs/cycle |
+|---|---|---|---|---|
+| HMMA | m16n8k16 | 4096 | 35 | 117 |
+| QMMA | m16n8k32 | 8192 | 35 | 234 |
+| OMMA 4X | m16n8k64 | 16384 | **29** | **565** |
 
-### Open questions
-
-* [HYP] Why `kind::mxf8f6f4` at k=64 reaches peak (900 TFLOPS) while `kind::f8f6f4` at k=32 plateaus at 238 TFLOPS. [OBS from Lei Mao benchmark, to explain at SASS level].
-* [HYP] Scale factor register encoding in SASS.
-* [HYP] `-arch=sm_120` vs `-arch=sm_120a` SASS delta for block-scaled atoms.
+* [OBS] OMMA delivers 4.8× more FLOPs/cycle than HMMA and 2.4× more than QMMA at the latency floor.
+* [OBS] Single-warp chain-bound throughput = ~254 TFLOPS on RTX 5070 Ti at 2.45 GHz × 46 SMs.
+* [HYP] The announced 900+ TFLOPS peak is achievable only via pipelined throughput (multiple MMAs in flight simultaneously), not via a latency-bound chain. Chain bound provides ~3.5× headroom to 900 TFLOPS via pipelining.
+### Chain dependency and register reuse patterns
+* [OBS] OMMA chain pattern observed in 16d: first MMA has C=RZ (zero init), subsequent MMAs have C=R12 (previous D). Pattern identical to HMMA and QMMA chains (chap 13d, 14e).
+* [OBS] `.reuse` flags on A (R2) and SFB (R8) in OMMA chain. ptxas keeps these operands in register cache between consecutive MMAs.
+* [OBS] Scoreboard wait mask in control code byte 0:
+  * First MMA in chain: byte 0 = 0xff (no dependency)
+  * Subsequent MMAs: byte 0 = 0x0c (wait on previous D's scoreboard slot)
+* [OBS] Same dependency-tracking mechanism across HMMA, QMMA, OMMA families.
+### Resolved hypotheses
+* [RES] Block-scaled mxf4nvf4 produces a new SASS opcode family (OMMA, low byte 0x7f)
+* [RES] Block-scaled mxf8f6f4 uses existing QMMA with `.SF` modifier
+* [RES] Scale factors add 2 new operands (SFA, SFB) plus URZ placeholder
+* [RES] Shape m16n8k64 is specific to mxf4nvf4 (kind::mxf4nvf4)
+* [RES] `.UE4M3.4X` suffix identifies the fine-grained FP4 peak path
+* [RES] scale_vec and scale dtype encoded in control code byte 2 (not opcode bytes)
+* [RES] OMMA chain latency ~29 cycles/MMA, faster than HMMA/QMMA (~35)
+* [RES] OMMA gives 4.8× FLOPs/cycle vs HMMA at the latency floor
+### Open gaps
+* [GAP-16-1] Orthogonal vs direct-map encoding of control code byte 2 cannot be disambiguated without a fourth test variant (mxf4nvf4 4X with ue8m0, not a CUTLASS atom).
+* [GAP-16-2] OMMA pipelined throughput not measured. Would require a multi-warp microbench with independent MMAs.
+* [GAP-16-3] Scale factor values other than 1.0 not tested. Real block-scaled kernels use diverse scale values per block.
+* [GAP-16-4] Direct comparison with production FP4 GEMM SASS (CUTLASS, Marlin FP4) not done. Would validate the decoded opcodes in production context.
+* [GAP] FP4 (E2M1) register layout from chap 14d [GAP-14d-1] still unresolved. Independent of opcode decoding but blocks full audit of FP4 kernels.
+### New instructions observed in this chapter
+| Opcode | Usage |
+|---|---|
+| QMMA.SF.16832.F32.\<A\>.\<B\>.E8 | mma.sync kind::mxf8f6f4 with scale_vec::1X ue8m0 |
+| OMMA.SF.16864.F32.\<A\>.\<B\>.E8 | mma.sync kind::mxf4nvf4 with scale_vec::2X ue8m0 (OMMA default) |
+| OMMA.SF.16864.F32.\<A\>.\<B\>.UE4M3.4X | mma.sync kind::mxf4nvf4 with scale_vec::4X ue4m3 (FP4 peak) |
+### New modifiers
+* `.SF` on QMMA: Scale Factor enabled (block scaling mode)
+* `.E8` suffix: scale dtype ue8m0 (short form for the common case)
+* `.UE4M3` suffix: scale dtype ue4m3 (full notation for fine-grained mode)
+* `.4X` suffix on OMMA: scale_vec::4X (finer granularity than default 2X)
+### Implications for production kernel audit
+With chapters 13 (HMMA), 14 (QMMA), 16 (block-scaled), 17 (LDSM), 18 (cp.async pipeline), the repo now documents **every MMA opcode emitted by mma.sync on SM120**, including the block-scaled FP4 peak path. Combined with the load/store/sync opcodes from earlier chapters, every production GEMM, FP4 quantized inference, or block-scaled attention kernel on SM120 is now decodable end-to-end.
+### Diagnostic workflow for block-scaled MMA in production
+When auditing a block-scaled SASS dump:
+1. Identify the MMA family via low byte: 0x3c = HMMA, 0x7a = QMMA, 0x7f = OMMA.
+2. Check for `.SF` modifier in the mnemonic — indicates block scaling is active.
+3. Read shape from mnemonic: 16816, 16832, or 16864.
+4. Read input dtypes: E4M3, E5M2, E3M2, E2M3, E2M1 (see chap 14 for the full dtype encoding table).
+5. Read scale dtype: `.E8` = ue8m0, `.UE4M3` = ue4m3.
+6. Check for scale_vec tag: absent = default (1X for QMMA, 2X for OMMA), `.4X` = fine-grained.
+7. Decode control code byte 2 for confirmation of scaling mode.
+8. Look for `.reuse` flags on A and SFB operands in chains (register cache optimization).
+9. Count cycles via scoreboard mask in byte 0 of control code.
 
 ---
 
