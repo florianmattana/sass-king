@@ -1211,15 +1211,135 @@ When you see a QMMA in a production kernel:
 
 ---
 
-## Kernel 17 ldmatrix and stmatrix
-
-[WIP]
-
-### Open questions
-
-* [HYP] SASS opcode for ldmatrix. Candidate `LDSM` (Jia et al. heritage).
-* [HYP] Latency of ldmatrix x1, x2, x4.
-* [HYP] `.trans` implementation: SASS modifier or address computation delta.
+## Kernel 17 LDSM (ldmatrix) baseline on SM120
+Chapter establishing the LDSM SASS opcode family — the realization of `ldmatrix.sync.aligned.*` from PTX. LDSM bridges shared memory and tensor core fragments. Six variants tested: width grid (x1/x2/x4), transpose modifier, production combo (LDSM + HMMA), and serial latency microbenchmark.
+### Variants and outcomes
+* [OBS] 17a (x1, no trans): baseline `LDSM.16.M88 R5, [R5+UR4]`. 22 useful instructions. d[0] = 0x3c000000 (halves 0.0, 1.0).
+* [OBS] 17b (x2, no trans): `LDSM.16.M88.2 R4, [R4+UR4]`. Mnemonic suffix `.2` and bit 8 of the control code differ from 17a. Thread 0 receives 4 halves from two tiles (0, 1, 64, 65).
+* [OBS] 17c (x4, no trans): `LDSM.16.M88.4 R4, [R0]`. Mnemonic suffix `.4`, bit 9 of the control code. Production case: 4 tiles loaded simultaneously. Addressing uses `[R]` only (no UR base) because ptxas packs the full address in R0.
+* [OBS] 17d (x4, trans): `LDSM.16.MT88.4 R4, [R0]`. Mnemonic changes `M88` to `MT88` for the transpose flag, bit 14 of the control code. Output verified transposed (column-ordered).
+* [OBS] 17e (LDSM.x4 A + LDSM.x2 B + HMMA.16816.F32): production pattern. Both LDSMs feed directly into HMMA with no NOPs in between. Scoreboard sync only. Register allocation packed: LDSM destinations are HMMA sources.
+* [OBS] 17f (N chained LDSM.x1 with clock64): total cycles 509, 1038, 2094 for N = 16, 32, 64. Linear model `total_cycles ≈ 33 × N`, chain overhead essentially zero.
+### Key observations
+* [OBS] **LDSM opcode family** on SM120: `LDSM.16.M[T]88[.<N>]` with opcode bytes `0x000000000004783b` (low byte `0x3b`, distinct from LDS `0x84` and LDG `0x81`). Base opcode invariant across all width and trans variants when destination register base is the same.
+* [OBS] Mnemonic decoding:
+  * `.16` = element size in bits (half)
+  * `M88` (no trans) or `MT88` (trans) — the T for transpose lives **inside** the shape tag, not as a suffix
+  * `.2` / `.4` suffix = multi-matrix width; no suffix = x1 (default)
+* [OBS] Six variants of LDSM identified (x1/x2/x4 × trans/no-trans). Four tested (17a-d), two inferred from the model (`LDSM.16.MT88` for x1.trans, `LDSM.16.MT88.2` for x2.trans).
+* [OBS] Addressing form varies by context:
+  * `[R + UR]` used by x1, x2 (17a, 17b): R = per-lane row offset, UR = shared memory base
+  * `[R]` used by x4 (17c): full address pre-computed into R0 (register recycling from STS)
+  * Both forms are syntactically valid; the choice is a ptxas optimization, not a hardware constraint
+* [OBS] Shared memory base uses the standard SM120 pattern: `UMOV UR4, 0x400` + `S2UR UR_cta` + `ULEA UR4, UR_cta, UR4, 0x18`. Identical to kernels 06-08.
+### Control code topology
+* [OBS] By comparing 17a/b/c byte-by-byte (for width) and 17c vs 17d (for trans), the following LDSM control code bits are decoded:
+| Bit | Meaning | Evidence |
+|---|---|---|
+| 8 | Width bit 0 | 17a vs 17b |
+| 9 | Width bit 1 | 17a vs 17c |
+| 14 | Transpose flag | 17d vs 17c |
+| 32-39 | Scoreboard slot ID (varies per instance) | 17e, 17f |
+| Others | Standard scheduling (stall/yield/wait) | - |
+* [OBS] Width field reads as `log2(N)` for N ∈ {1, 2, 4}:
+  * x1: bits (9, 8) = (0, 0), field = 0
+  * x2: bits (9, 8) = (0, 1), field = 1
+  * x4: bits (9, 8) = (1, 0), field = 2
+  * Value 3 unused, possibly reserved for future extensions
+### Production pattern (17e)
+* [OBS] Complete SASS sequence for `STS → BAR → LDSMs → HMMA → STG` on SM120:
+  ```
+  STS × N
+  BAR.SYNC.DEFER_BLOCKING 0x0
+  LDSM.16.M88.2 R10, [R7+UR5]     ← B fragment (emitted first by ptxas!)
+  LDSM.16.M88.4 R12, [R6+UR4]     ← A fragment (emitted second)
+  HMMA.16816.F32 R12, R12, R10, RZ
+  @!UPT UIADD3 URZ NOP
+  @!UPT UIADD3 URZ NOP
+  STG × N
+  ```
+* [OBS] **ptxas inverts LDSM emission order**: source code emits A (x4) before B (x2), but SASS shows B (x2) first then A (x4). Likely because emitting the smaller LDSM first gives the larger one more time to complete before HMMA needs both.
+* [OBS] **Zero NOPs between LDSM and HMMA**. Unlike MMA → consumer patterns (2 UIADD3 NOPs), the scoreboard mechanism fully handles LDSM → MMA sync.
+* [OBS] **HMMA wait mask `0xff`**: in 17e, HMMA control code low byte is `0xff` (binary `1111 1111`), distinct from the `0x14` observed in chapter 13b (HMMA with LDG sources). The `0xff` mask monitors all active scoreboards, ensuring wait on both LDSMs.
+* [OBS] **Zero-copy register allocation**: ptxas packs LDSM destinations exactly where HMMA reads its sources. No intermediate copies.
+  * LDSM.x2 destinations: R10, R11 → HMMA.B source R10
+  * LDSM.x4 destinations: R12..R15 → HMMA.A source R12, also colocated with HMMA.D
+* [OBS] **2 UIADD3 NOPs after HMMA**: identical pattern to chapter 13b (HMMA → consumer dependency).
+### Latency (17f)
+* [OBS] Three measurements at N = 16, 32, 64 chained LDSM.x1 via pointer-chase trick (add LDSM output = 0 to the address, creating a real dependency without invalidating the address):
+| N | total_cycles | cycles per LDSM |
+|---|---|---|
+| 16 | 509 | 31.81 |
+| 32 | 1038 | 32.44 |
+| 64 | 2094 | 32.72 |
+* [OBS] Linear regression on incremental costs:
+  * ΔN(16→32): 529 cycles for 16 added LDSMs → 33.06 cycles/LDSM
+  * ΔN(32→64): 1056 cycles for 32 added LDSMs → 33.00 cycles/LDSM
+* [RES] **Model**: `total_cycles ≈ 33 × N`. Chain overhead essentially zero (slightly negative, suggesting a small pipeline fill effect where the first LDSM is faster than steady-state).
+* [OBS] **Comparison with MMA latency**:
+| Operation | Cycles/instance | Chain overhead | Model |
+|---|---|---|---|
+| HMMA.16816.F32 (13e) | ~35 | ~310 | `310 + 35×N` |
+| QMMA.16832.F32 (14f) | ~35 | ~510 | `510 + 35×N` |
+| LDSM.16.M88 x1 (17f) | ~33 | ~0 | `33×N` |
+* [OBS] LDSM per-instance cost comparable to MMA, but chain overhead is effectively zero. LDSM does not require the MAC initialization overhead of HMMA/QMMA.
+* [HYP] LDSM and MMA likely share internal datapaths (tensor memory unit), explaining similar latencies. LDSM doesn't need the startup overhead because it's shared memory access + matrix assembly, no MAC unit init.
+### LDSM chain pattern (17f internals)
+* [OBS] Chain structure (16 LDSMs on SM120):
+  ```
+  LDSM.16.M88 R3, [R3+UR4]    ctrl 0x000e240008000000   (first: wait + SBS)
+  IADD R4, R4, R3              ctrl 0x001fca00078e0000   (wait on LDSM scoreboard)
+  LDSM.16.M88 R5, [R4]         ctrl 0x000e240000000000   (subsequent: SBS only)
+  IADD R5, R4, R5
+  ...
+  ```
+* [OBS] **No NOPs anywhere in the chain**. Scoreboard handles all dependencies.
+* [OBS] **ptxas register renaming**: LDSM destinations alternate across ~8 registers (R3, R5, R2, R7, R6, R9, R8) instead of overwriting. Allows maximum ILP potential.
+* [OBS] **First LDSM carries a wait bit** (byte 24-31 = `0x08`) likely for BAR.SYNC sync. Subsequent LDSMs rely on register dependency through IADD and don't need it.
+* [OBS] **Register pressure minimal**: 8 registers suffice for N=16 LDSMs in chain.
+### Implications for production pipelining
+* [HYP] In a GEMM k-loop, the typical latency chain per tile is:
+  * LDSM_A + LDSM_B in parallel → ~33 cycles (critical path = max, not sum)
+  * HMMA → ~35 cycles
+  * Total serial per tile: ~68 cycles (pessimistic, no overlap)
+* [HYP] With software pipelining (load next tile while current tile MMAs), this overlaps down to max(LDSM, HMMA) ≈ 35 cycles per tile. Confirmed pattern in CUTLASS / FlashAttention cp.async pipelines.
+### Resolved hypotheses
+* [RES] LDSM is a new opcode family distinct from LDS (`0x84`) and LDG (`0x81`). Family byte `0x3b`.
+* [RES] Width (x1/x2/x4) encoded in 2 bits of control code (bits 8-9), not in opcode bytes.
+* [RES] Trans encoded in 1 bit of control code (bit 14).
+* [RES] Opcode bytes invariant across width and trans variants.
+* [RES] LDSM → HMMA requires no NOPs. Scoreboard-only sync.
+* [RES] HMMA wait mask differs between LDG-sourced (0x14) and LDSM-sourced (0xff).
+* [RES] Register allocation perfectly packed: LDSM destinations = HMMA sources, zero-copy.
+* [RES] LDSM serial latency ~33 cycles on SM120, comparable to MMA.
+* [RES] Chain overhead ~0 for LDSM, vs ~310 for HMMA and ~510 for QMMA.
+### Open gaps
+* [GAP] `.trans` variants x1 and x2 not compiled/verified (inferred only). Predictions: `LDSM.16.MT88` and `LDSM.16.MT88.2`.
+* [GAP] `stmatrix` (STSM?) not tested. PTX `stmatrix.sync.aligned.*` introduced in SM90. Might exist as a separate opcode on SM120, or fall back to STS sequence. Needs its own section.
+* [GAP] LDSM width > 4 not tested. The 2-bit width field value 3 is unused — probably reserved.
+* [GAP] LDSM with larger elements (e.g., `.b32` variant) not tested. The `.16` in the mnemonic suggests an element size field that could hold other values.
+* [GAP] LDSM combined with cp.async (LDGSTS) in a full pipelined tile not tested. Needs chapter 18 (pipelined tile).
+* [GAP] Exact bit allocation for scoreboard slot ID in bytes 32-39 not formally decoded.
+### New instructions observed in this chapter
+| Opcode | Usage |
+|---|---|
+| LDSM.16.M88 | ldmatrix.x1.m8n8.shared.b16 |
+| LDSM.16.M88.2 | ldmatrix.x2.m8n8.shared.b16 |
+| LDSM.16.M88.4 | ldmatrix.x4.m8n8.shared.b16 |
+| LDSM.16.MT88.4 | ldmatrix.x4.trans.m8n8.shared.b16 |
+### New modifiers
+* `.16` on LDSM: element size (bits). Only 16 (half) tested.
+* `M88` on LDSM: shape m8n8 in normal orientation
+* `MT88` on LDSM: shape m8n8 in transposed orientation (T marker inside shape tag)
+* `.2`, `.4` on LDSM: width suffix (x2, x4); absent for x1 default
+### Diagnostic workflow for LDSM in production
+When auditing a GEMM or attention kernel:
+1. Locate LDSM instructions (search `LDSM`). They cluster around BAR.SYNC barriers.
+2. Identify width: `.2` / `.4` suffix for x2 / x4; no suffix = x1.
+3. Identify orientation: `M88` vs `MT88`. B fragments are commonly trans in row-col GEMM layouts.
+4. Find the MMA that consumes LDSM outputs: should be within a few instructions, dst registers match MMA sources.
+5. Check MMA wait mask: `0xff` when LDSM feeds directly, distinct from `0x14` (HMMA with LDG sources).
+6. Estimate cycles: `~33 per LDSM + ~35 per MMA`, pipelined across k-loop iterations.
 
 ---
 
