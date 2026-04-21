@@ -2388,3 +2388,61 @@ When opening any SASS dump for performance work:
     * BSSY/BSYNC with short body → divergence before warp-synchronous op OR slowpath branch
 13. **Check ptxas warnings** in the compile output. `adjusting per thread register count of N to lower bound of 24` confirms SM120 register floor was hit.
 14. **Correlate with NCU**. SASS identifies the "who", NCU quantifies the "how much". For spilled kernels, check `stall_lg_throttle` and local memory metrics in NCU.
+
+## Audit gaps identified from production kernel attempt
+
+During an attempt to audit a production fused FP4 attention kernel on SM120, several gaps in the current findings were identified that prevent reliable end-to-end kernel audit. Listed here for future chapter planning.
+
+### [GAP-audit-1] C++ loop to SASS mapping is not understood
+
+* [OBS] A kernel with constant-trip-count nested loops (N_TILES=8, K_TILES=2) should produce 16 static MMAs if fully unrolled.
+* [OBS] The observed SASS had 2 QMMAs only, with zero BRA back-edges.
+* [OBS] This outcome is inconsistent with both "fully unrolled" and "loop preserved" interpretations.
+* [HYP] Either the binary was stale (compiled from an earlier version of source), or ptxas applied an optimization we do not recognize, or our model of unroll behavior is wrong.
+* [GAP] We cannot currently predict what SASS a given C++ loop will produce. This blocks audit of any kernel with non-trivial control flow.
+
+### [GAP-audit-2] Loop detection without BRA back-edge is not documented
+
+* [OBS] All chapters so far assumed loops always emit a BRA back-edge (target < source) at the bottom of the loop body.
+* [OBS] In the FP4 attention SASS, no back-edge was found in a kernel that must have dynamic loops at the C++ level (`seq_tile` depends on runtime `seq_k`).
+* [HYP] Blackwell may use BSSY/BSYNC for loop structures, not just divergence.
+* [HYP] Or the compiler specialized the binary with constant folding of dynamic parameters.
+* [GAP] The complete inventory of SASS loop encodings on SM120 has not been characterized.
+
+### [GAP-audit-3] Divergence and predication patterns are undocumented
+
+* [OBS] 269 forward BRAs observed in the FP4 attention kernel, organized in groups of 4 pointing to the same target, with stride 0x30.
+* [HYP] These correspond to unrolled `if/else if/else if/...` chains from FP4 encoding (8 levels), processed in parallel.
+* [GAP] No chapter covers predication vs branching, divergence signatures, or reconvergence point identification (BSSY/BSYNC pairing).
+
+### [GAP-audit-4] Thread vs warp vs block scope is not explicit in any chapter
+
+* [OBS] When counting QMMAs in a SASS dump, the interpretation depends on scope: is this the code executed by 1 thread, 1 warp, or 1 block?
+* [HYP] The answer is "1 thread executing warp-level instructions," meaning the same instruction is executed simultaneously by all 32 threads in the warp.
+* [GAP] No chapter formalizes this or explains how per-thread vs per-warp vs per-block instruction counts differ.
+
+### [GAP-audit-5] Template specialization effects not covered
+
+* [OBS] The kernel was template `<int HEAD_DIM>` with two instantiations (64, 128) visible in the SASS dump.
+* [OBS] Other constants (N_TILES, K_TILES) are computed from HEAD_DIM but not template parameters.
+* [GAP] Chapter 12 touches on register pressure from templates but does not systematically cover specialization effects.
+
+### [GAP-audit-6] No documented audit methodology
+
+* [OBS] Chapters 01-18 document opcodes and patterns in isolation.
+* [GAP] There is no written methodology for auditing a production kernel end-to-end: how to identify kernel sections, how to map C++ source to SASS regions, how to interpret instruction densities, how to validate hypotheses about kernel behavior.
+
+### [GAP-audit-7] No confidence qualification framework
+
+* [OBS] During the FP4 attention audit attempt, hypotheses produced were inconsistently confident, and some turned out to be wrong without this being flagged.
+* [GAP] The [OBS]/[HYP]/[RES]/[GAP] tagging is at the claim level, but there is no framework for qualifying confidence at the audit level (e.g. "this audit conclusion depends on N untested assumptions").
+
+### Plan to close the gaps
+
+* Chapter 20 (planned, not executed): control flow — loops, unroll behavior, back-edge detection, BSSY/BSYNC semantics. See `tensor_cores/20_control_flow/plan.md`. Closes GAP-audit-1, GAP-audit-2, partially GAP-audit-4.
+* Chapter 21 (candidate): divergence and predication. Would close GAP-audit-3.
+* Chapter 22 (candidate): audit methodology — a walkthrough of auditing a production kernel using all prior chapters. Would close GAP-audit-6 and GAP-audit-7.
+
+### Decision: chapter 20 deferred
+
+The control flow chapter (20) is drafted but not executed. Current priority is to test the current toolkit on a different production kernel to verify whether these gaps are universal or specific to the FP4 attention case.
