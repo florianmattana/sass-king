@@ -1,0 +1,3 @@
+[submodule "guide"]
+	path = guide
+	url = git@github.com:florianmattana/sass-king-guide.git
