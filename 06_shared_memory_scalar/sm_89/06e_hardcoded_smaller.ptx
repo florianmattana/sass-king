@@ -1,0 +1,91 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+
+
+.visible .entry _Z16vector_smem_halfPKfPfi(
+.param .u64 _Z16vector_smem_halfPKfPfi_param_0,
+.param .u64 _Z16vector_smem_halfPKfPfi_param_1,
+.param .u32 _Z16vector_smem_halfPKfPfi_param_2
+)
+{
+.reg .pred %p<4>;
+.reg .f32 %f<3>;
+.reg .b32 %r<17>;
+.reg .b64 %rd<8>;
+
+.shared .align 4 .b8 _ZZ16vector_smem_halfPKfPfiE4smem[512];
+
+ld.param.u64 %rd1, [_Z16vector_smem_halfPKfPfi_param_0];
+ld.param.u64 %rd2, [_Z16vector_smem_halfPKfPfi_param_1];
+ld.param.u32 %r3, [_Z16vector_smem_halfPKfPfi_param_2];
+mov.u32 %r4, %ctaid.x;
+mov.u32 %r5, %ntid.x;
+mov.u32 %r1, %tid.x;
+mad.lo.s32 %r2, %r4, %r5, %r1;
+setp.ge.s32 %p1, %r2, %r3;
+setp.gt.s32 %p2, %r1, 127;
+or.pred %p3, %p2, %p1;
+@%p3 bra $L__BB0_2;
+
+cvta.to.global.u64 %rd3, %rd1;
+mul.wide.s32 %rd4, %r2, 4;
+add.s64 %rd5, %rd3, %rd4;
+ld.global.f32 %f1, [%rd5];
+shl.b32 %r6, %r1, 2;
+mov.u32 %r7, _ZZ16vector_smem_halfPKfPfiE4smem;
+add.s32 %r8, %r7, %r6;
+st.shared.f32 [%r8], %f1;
+bar.sync 0;
+add.s32 %r9, %r1, 1;
+shr.s32 %r10, %r9, 31;
+shr.u32 %r11, %r10, 25;
+add.s32 %r12, %r9, %r11;
+and.b32 %r13, %r12, 1073741696;
+sub.s32 %r14, %r9, %r13;
+shl.b32 %r15, %r14, 2;
+add.s32 %r16, %r7, %r15;
+ld.shared.f32 %f2, [%r16];
+cvta.to.global.u64 %rd6, %rd2;
+add.s64 %rd7, %rd6, %rd4;
+st.global.f32 [%rd7], %f2;
+
+$L__BB0_2:
+ret;
+
+}
+
+
