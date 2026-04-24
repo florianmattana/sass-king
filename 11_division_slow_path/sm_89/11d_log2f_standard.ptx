@@ -1,0 +1,121 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+
+.visible .entry _Z14log2f_standardPKfPfi(
+.param .u64 _Z14log2f_standardPKfPfi_param_0,
+.param .u64 _Z14log2f_standardPKfPfi_param_1,
+.param .u32 _Z14log2f_standardPKfPfi_param_2
+)
+{
+.reg .pred %p<5>;
+.reg .f32 %f<39>;
+.reg .b32 %r<10>;
+.reg .b64 %rd<10>;
+
+
+ld.param.u64 %rd2, [_Z14log2f_standardPKfPfi_param_0];
+ld.param.u64 %rd3, [_Z14log2f_standardPKfPfi_param_1];
+ld.param.u32 %r2, [_Z14log2f_standardPKfPfi_param_2];
+mov.u32 %r3, %ctaid.x;
+mov.u32 %r4, %ntid.x;
+mov.u32 %r5, %tid.x;
+mad.lo.s32 %r1, %r3, %r4, %r5;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB0_4;
+
+cvta.to.global.u64 %rd4, %rd2;
+cvt.s64.s32 %rd1, %r1;
+mul.wide.s32 %rd5, %r1, 4;
+add.s64 %rd6, %rd4, %rd5;
+ld.global.f32 %f5, [%rd6];
+setp.lt.f32 %p2, %f5, 0f00800000;
+mul.f32 %f6, %f5, 0f4B000000;
+selp.f32 %f1, %f6, %f5, %p2;
+selp.f32 %f7, 0fC1B80000, 0f00000000, %p2;
+mov.b32 %r6, %f1;
+add.s32 %r7, %r6, -1060439283;
+and.b32 %r8, %r7, -8388608;
+sub.s32 %r9, %r6, %r8;
+mov.b32 %f8, %r9;
+cvt.rn.f32.s32 %f9, %r8;
+mov.f32 %f10, 0f34000000;
+fma.rn.f32 %f11, %f9, %f10, %f7;
+add.f32 %f12, %f8, 0fBF800000;
+mov.f32 %f13, 0fBE2C7F30;
+mov.f32 %f14, 0f3DC6B27F;
+fma.rn.f32 %f15, %f14, %f12, %f13;
+mov.f32 %f16, 0f3E2FCF2A;
+fma.rn.f32 %f17, %f15, %f12, %f16;
+mov.f32 %f18, 0fBE374E43;
+fma.rn.f32 %f19, %f17, %f12, %f18;
+mov.f32 %f20, 0f3E520BF4;
+fma.rn.f32 %f21, %f19, %f12, %f20;
+mov.f32 %f22, 0fBE763C8B;
+fma.rn.f32 %f23, %f21, %f12, %f22;
+mov.f32 %f24, 0f3E93BF99;
+fma.rn.f32 %f25, %f23, %f12, %f24;
+mov.f32 %f26, 0fBEB8AA49;
+fma.rn.f32 %f27, %f25, %f12, %f26;
+mov.f32 %f28, 0f3EF6384A;
+fma.rn.f32 %f29, %f27, %f12, %f28;
+mov.f32 %f30, 0fBF38AA3B;
+fma.rn.f32 %f31, %f29, %f12, %f30;
+mul.f32 %f32, %f12, %f31;
+mul.f32 %f33, %f12, %f32;
+mov.f32 %f34, 0f3FB8AA3B;
+fma.rn.f32 %f35, %f12, %f34, %f33;
+add.f32 %f38, %f11, %f35;
+setp.lt.u32 %p3, %r6, 2139095040;
+@%p3 bra $L__BB0_3;
+
+mov.f32 %f36, 0f7F800000;
+fma.rn.f32 %f38, %f1, %f36, %f36;
+
+$L__BB0_3:
+setp.eq.f32 %p4, %f1, 0f00000000;
+selp.f32 %f37, 0fFF800000, %f38, %p4;
+cvta.to.global.u64 %rd7, %rd3;
+shl.b64 %rd8, %rd1, 2;
+add.s64 %rd9, %rd7, %rd8;
+st.global.f32 [%rd9], %f37;
+
+$L__BB0_4:
+ret;
+
+}
+
+

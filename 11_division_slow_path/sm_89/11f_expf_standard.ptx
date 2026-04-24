@@ -1,0 +1,91 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+
+.visible .entry _Z13expf_standardPKfPfi(
+.param .u64 _Z13expf_standardPKfPfi_param_0,
+.param .u64 _Z13expf_standardPKfPfi_param_1,
+.param .u32 _Z13expf_standardPKfPfi_param_2
+)
+{
+.reg .pred %p<2>;
+.reg .f32 %f<18>;
+.reg .b32 %r<8>;
+.reg .b64 %rd<8>;
+
+
+ld.param.u64 %rd1, [_Z13expf_standardPKfPfi_param_0];
+ld.param.u64 %rd2, [_Z13expf_standardPKfPfi_param_1];
+ld.param.u32 %r2, [_Z13expf_standardPKfPfi_param_2];
+mov.u32 %r3, %ctaid.x;
+mov.u32 %r4, %ntid.x;
+mov.u32 %r5, %tid.x;
+mad.lo.s32 %r1, %r3, %r4, %r5;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB0_2;
+
+cvta.to.global.u64 %rd3, %rd1;
+mul.wide.s32 %rd4, %r1, 4;
+add.s64 %rd5, %rd3, %rd4;
+ld.global.f32 %f1, [%rd5];
+mov.f32 %f2, 0f3F000000;
+mov.f32 %f3, 0f3BBB989D;
+fma.rn.f32 %f4, %f1, %f3, %f2;
+cvt.sat.f32.f32 %f5, %f4;
+mov.f32 %f6, 0f4B400001;
+mov.f32 %f7, 0f437C0000;
+fma.rm.f32 %f8, %f5, %f7, %f6;
+add.f32 %f9, %f8, 0fCB40007F;
+neg.f32 %f10, %f9;
+mov.f32 %f11, 0f3FB8AA3B;
+fma.rn.f32 %f12, %f1, %f11, %f10;
+mov.f32 %f13, 0f32A57060;
+fma.rn.f32 %f14, %f1, %f13, %f12;
+mov.b32 %r6, %f8;
+shl.b32 %r7, %r6, 23;
+mov.b32 %f15, %r7;
+ex2.approx.ftz.f32 %f16, %f14;
+mul.f32 %f17, %f16, %f15;
+cvta.to.global.u64 %rd6, %rd2;
+add.s64 %rd7, %rd6, %rd4;
+st.global.f32 [%rd7], %f17;
+
+$L__BB0_2:
+ret;
+
+}
+
+
