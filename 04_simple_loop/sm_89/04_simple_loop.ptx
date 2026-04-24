@@ -1,0 +1,108 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+
+.visible .entry _Z11vector_loopPKfPfii(
+.param .u64 _Z11vector_loopPKfPfii_param_0,
+.param .u64 _Z11vector_loopPKfPfii_param_1,
+.param .u32 _Z11vector_loopPKfPfii_param_2,
+.param .u32 _Z11vector_loopPKfPfii_param_3
+)
+{
+.reg .pred %p<7>;
+.reg .f32 %f<18>;
+.reg .b32 %r<16>;
+.reg .b64 %rd<10>;
+
+
+ld.param.u64 %rd2, [_Z11vector_loopPKfPfii_param_0];
+ld.param.u64 %rd3, [_Z11vector_loopPKfPfii_param_1];
+ld.param.u32 %r9, [_Z11vector_loopPKfPfii_param_2];
+ld.param.u32 %r8, [_Z11vector_loopPKfPfii_param_3];
+mov.u32 %r10, %ntid.x;
+mov.u32 %r11, %ctaid.x;
+mov.u32 %r12, %tid.x;
+mad.lo.s32 %r1, %r11, %r10, %r12;
+setp.ge.s32 %p1, %r1, %r9;
+@%p1 bra $L__BB0_8;
+
+cvta.to.global.u64 %rd4, %rd2;
+cvt.s64.s32 %rd1, %r1;
+mul.wide.s32 %rd5, %r1, 4;
+add.s64 %rd6, %rd4, %rd5;
+ld.global.f32 %f17, [%rd6];
+setp.lt.s32 %p2, %r8, 1;
+@%p2 bra $L__BB0_7;
+
+add.s32 %r13, %r8, -1;
+and.b32 %r15, %r8, 3;
+setp.lt.u32 %p3, %r13, 3;
+@%p3 bra $L__BB0_5;
+
+sub.s32 %r14, %r8, %r15;
+
+$L__BB0_4:
+fma.rn.f32 %f10, %f17, 0f3F8020C5, 0f3F000000;
+fma.rn.f32 %f11, %f10, 0f3F8020C5, 0f3F000000;
+fma.rn.f32 %f12, %f11, 0f3F8020C5, 0f3F000000;
+fma.rn.f32 %f17, %f12, 0f3F8020C5, 0f3F000000;
+add.s32 %r14, %r14, -4;
+setp.ne.s32 %p4, %r14, 0;
+@%p4 bra $L__BB0_4;
+
+$L__BB0_5:
+setp.eq.s32 %p5, %r15, 0;
+@%p5 bra $L__BB0_7;
+
+$L__BB0_6:
+.pragma "nounroll";
+fma.rn.f32 %f17, %f17, 0f3F8020C5, 0f3F000000;
+add.s32 %r15, %r15, -1;
+setp.ne.s32 %p6, %r15, 0;
+@%p6 bra $L__BB0_6;
+
+$L__BB0_7:
+cvta.to.global.u64 %rd7, %rd3;
+shl.b64 %rd8, %rd1, 2;
+add.s64 %rd9, %rd7, %rd8;
+st.global.f32 [%rd9], %f17;
+
+$L__BB0_8:
+ret;
+
+}
+
+
