@@ -1,0 +1,89 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+
+.visible .entry _Z11vector8_addPK6float8S1_PS_i(
+.param .u64 _Z11vector8_addPK6float8S1_PS_i_param_0,
+.param .u64 _Z11vector8_addPK6float8S1_PS_i_param_1,
+.param .u64 _Z11vector8_addPK6float8S1_PS_i_param_2,
+.param .u32 _Z11vector8_addPK6float8S1_PS_i_param_3
+)
+{
+.reg .pred %p<2>;
+.reg .f32 %f<41>;
+.reg .b32 %r<6>;
+.reg .b64 %rd<11>;
+
+
+ld.param.u64 %rd1, [_Z11vector8_addPK6float8S1_PS_i_param_0];
+ld.param.u64 %rd2, [_Z11vector8_addPK6float8S1_PS_i_param_1];
+ld.param.u64 %rd3, [_Z11vector8_addPK6float8S1_PS_i_param_2];
+ld.param.u32 %r2, [_Z11vector8_addPK6float8S1_PS_i_param_3];
+mov.u32 %r3, %ctaid.x;
+mov.u32 %r4, %ntid.x;
+mov.u32 %r5, %tid.x;
+mad.lo.s32 %r1, %r3, %r4, %r5;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB0_2;
+
+cvta.to.global.u64 %rd4, %rd1;
+mul.wide.s32 %rd5, %r1, 32;
+add.s64 %rd6, %rd4, %rd5;
+ld.global.v4.f32 {%f1, %f2, %f3, %f4}, [%rd6];
+ld.global.v4.f32 {%f9, %f10, %f11, %f12}, [%rd6+16];
+cvta.to.global.u64 %rd7, %rd2;
+add.s64 %rd8, %rd7, %rd5;
+ld.global.v4.f32 {%f17, %f18, %f19, %f20}, [%rd8];
+ld.global.v4.f32 {%f25, %f26, %f27, %f28}, [%rd8+16];
+cvta.to.global.u64 %rd9, %rd3;
+add.s64 %rd10, %rd9, %rd5;
+add.f32 %f33, %f4, %f20;
+add.f32 %f34, %f3, %f19;
+add.f32 %f35, %f2, %f18;
+add.f32 %f36, %f1, %f17;
+st.global.v4.f32 [%rd10], {%f36, %f35, %f34, %f33};
+add.f32 %f37, %f12, %f28;
+add.f32 %f38, %f11, %f27;
+add.f32 %f39, %f10, %f26;
+add.f32 %f40, %f9, %f25;
+st.global.v4.f32 [%rd10+16], {%f40, %f39, %f38, %f37};
+
+$L__BB0_2:
+ret;
+
+}
+
+
