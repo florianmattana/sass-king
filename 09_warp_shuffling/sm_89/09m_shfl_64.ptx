@@ -1,0 +1,78 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+
+.visible .entry _Z7shfl_64PKdPd(
+.param .u64 _Z7shfl_64PKdPd_param_0,
+.param .u64 _Z7shfl_64PKdPd_param_1
+)
+{
+.reg .pred %p<3>;
+.reg .b32 %r<12>;
+.reg .f64 %fd<4>;
+.reg .b64 %rd<8>;
+
+
+ld.param.u64 %rd1, [_Z7shfl_64PKdPd_param_0];
+ld.param.u64 %rd2, [_Z7shfl_64PKdPd_param_1];
+cvta.to.global.u64 %rd3, %rd2;
+cvta.to.global.u64 %rd4, %rd1;
+mov.u32 %r5, %ctaid.x;
+mov.u32 %r6, %ntid.x;
+mov.u32 %r7, %tid.x;
+mad.lo.s32 %r8, %r5, %r6, %r7;
+mul.wide.s32 %rd5, %r8, 8;
+add.s64 %rd6, %rd4, %rd5;
+ld.global.f64 %fd1, [%rd6];
+
+mov.b64 {%r1,%r2}, %fd1;
+
+mov.u32 %r9, 31;
+mov.u32 %r10, 0;
+mov.u32 %r11, -1;
+shfl.sync.idx.b32 %r4|%p1, %r2, %r10, %r9, %r11;
+shfl.sync.idx.b32 %r3|%p2, %r1, %r10, %r9, %r11;
+
+mov.b64 %fd2, {%r3,%r4};
+
+add.f64 %fd3, %fd1, %fd2;
+add.s64 %rd7, %rd3, %rd5;
+st.global.f64 [%rd7], %fd3;
+ret;
+
+}
+
+

@@ -1,0 +1,109 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+
+.visible .entry _Z9sync_warpPKfPf(
+.param .u64 _Z9sync_warpPKfPf_param_0,
+.param .u64 _Z9sync_warpPKfPf_param_1
+)
+{
+.reg .pred %p<7>;
+.reg .f32 %f<12>;
+.reg .b32 %r<26>;
+.reg .b64 %rd<9>;
+
+
+ld.param.u64 %rd2, [_Z9sync_warpPKfPf_param_0];
+ld.param.u64 %rd1, [_Z9sync_warpPKfPf_param_1];
+cvta.to.global.u64 %rd3, %rd2;
+mov.u32 %r1, %ntid.x;
+mov.u32 %r2, %ctaid.x;
+mov.u32 %r3, %tid.x;
+mad.lo.s32 %r4, %r2, %r1, %r3;
+mul.wide.s32 %rd4, %r4, 4;
+add.s64 %rd5, %rd3, %rd4;
+ld.global.f32 %f2, [%rd5];
+mov.u32 %r5, -1;
+bar.warp.sync -1;
+mov.b32 %r6, %f2;
+mov.u32 %r7, 31;
+mov.u32 %r8, 16;
+shfl.sync.bfly.b32 %r9|%p1, %r6, %r8, %r7, %r5;
+mov.b32 %f3, %r9;
+add.f32 %f4, %f2, %f3;
+bar.warp.sync -1;
+mov.b32 %r10, %f4;
+mov.u32 %r11, 8;
+shfl.sync.bfly.b32 %r12|%p2, %r10, %r11, %r7, %r5;
+mov.b32 %f5, %r12;
+add.f32 %f6, %f4, %f5;
+bar.warp.sync -1;
+mov.b32 %r13, %f6;
+mov.u32 %r14, 4;
+shfl.sync.bfly.b32 %r15|%p3, %r13, %r14, %r7, %r5;
+mov.b32 %f7, %r15;
+add.f32 %f8, %f6, %f7;
+bar.warp.sync -1;
+mov.b32 %r16, %f8;
+mov.u32 %r17, 2;
+shfl.sync.bfly.b32 %r18|%p4, %r16, %r17, %r7, %r5;
+mov.b32 %f9, %r18;
+add.f32 %f10, %f8, %f9;
+bar.warp.sync -1;
+mov.b32 %r19, %f10;
+mov.u32 %r20, 1;
+shfl.sync.bfly.b32 %r21|%p5, %r19, %r20, %r7, %r5;
+mov.b32 %f11, %r21;
+add.f32 %f1, %f10, %f11;
+bar.warp.sync -1;
+and.b32 %r22, %r3, 31;
+setp.ne.s32 %p6, %r22, 0;
+@%p6 bra $L__BB0_2;
+
+cvta.to.global.u64 %rd6, %rd1;
+shr.u32 %r23, %r1, 5;
+shr.u32 %r24, %r3, 5;
+mad.lo.s32 %r25, %r23, %r2, %r24;
+mul.wide.u32 %rd7, %r25, 4;
+add.s64 %rd8, %rd6, %rd7;
+st.global.f32 [%rd8], %f1;
+
+$L__BB0_2:
+ret;
+
+}
+
+
