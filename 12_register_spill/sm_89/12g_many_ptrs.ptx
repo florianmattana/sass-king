@@ -1,0 +1,140 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+
+.visible .entry _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi(
+.param .u64 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_0,
+.param .u64 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_1,
+.param .u64 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_2,
+.param .u64 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_3,
+.param .u64 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_4,
+.param .u64 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_5,
+.param .u64 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_6,
+.param .u64 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_7,
+.param .u64 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_8,
+.param .u64 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_9,
+.param .u64 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_10,
+.param .u64 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_11,
+.param .u64 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_12,
+.param .u32 _Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_13
+)
+{
+.reg .pred %p<2>;
+.reg .f32 %f<25>;
+.reg .b32 %r<6>;
+.reg .b64 %rd<41>;
+
+
+ld.param.u64 %rd1, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_0];
+ld.param.u64 %rd2, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_1];
+ld.param.u64 %rd3, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_2];
+ld.param.u64 %rd4, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_3];
+ld.param.u64 %rd5, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_4];
+ld.param.u64 %rd6, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_5];
+ld.param.u64 %rd7, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_6];
+ld.param.u64 %rd8, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_7];
+ld.param.u64 %rd9, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_8];
+ld.param.u64 %rd10, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_9];
+ld.param.u64 %rd11, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_10];
+ld.param.u64 %rd12, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_11];
+ld.param.u64 %rd13, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_12];
+ld.param.u32 %r2, [_Z9many_ptrsPKfS0_S0_S0_S0_S0_S0_S0_S0_S0_S0_S0_Pfi_param_13];
+mov.u32 %r3, %ctaid.x;
+mov.u32 %r4, %ntid.x;
+mov.u32 %r5, %tid.x;
+mad.lo.s32 %r1, %r3, %r4, %r5;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB0_2;
+
+cvta.to.global.u64 %rd14, %rd1;
+mul.wide.s32 %rd15, %r1, 4;
+add.s64 %rd16, %rd14, %rd15;
+ld.global.f32 %f1, [%rd16];
+add.f32 %f2, %f1, 0f00000000;
+cvta.to.global.u64 %rd17, %rd2;
+add.s64 %rd18, %rd17, %rd15;
+ld.global.f32 %f3, [%rd18];
+add.f32 %f4, %f2, %f3;
+cvta.to.global.u64 %rd19, %rd3;
+add.s64 %rd20, %rd19, %rd15;
+ld.global.f32 %f5, [%rd20];
+add.f32 %f6, %f4, %f5;
+cvta.to.global.u64 %rd21, %rd4;
+add.s64 %rd22, %rd21, %rd15;
+ld.global.f32 %f7, [%rd22];
+add.f32 %f8, %f6, %f7;
+cvta.to.global.u64 %rd23, %rd5;
+add.s64 %rd24, %rd23, %rd15;
+ld.global.f32 %f9, [%rd24];
+add.f32 %f10, %f8, %f9;
+cvta.to.global.u64 %rd25, %rd6;
+add.s64 %rd26, %rd25, %rd15;
+ld.global.f32 %f11, [%rd26];
+add.f32 %f12, %f10, %f11;
+cvta.to.global.u64 %rd27, %rd7;
+add.s64 %rd28, %rd27, %rd15;
+ld.global.f32 %f13, [%rd28];
+add.f32 %f14, %f12, %f13;
+cvta.to.global.u64 %rd29, %rd8;
+add.s64 %rd30, %rd29, %rd15;
+ld.global.f32 %f15, [%rd30];
+add.f32 %f16, %f14, %f15;
+cvta.to.global.u64 %rd31, %rd9;
+add.s64 %rd32, %rd31, %rd15;
+ld.global.f32 %f17, [%rd32];
+add.f32 %f18, %f16, %f17;
+cvta.to.global.u64 %rd33, %rd10;
+add.s64 %rd34, %rd33, %rd15;
+ld.global.f32 %f19, [%rd34];
+add.f32 %f20, %f18, %f19;
+cvta.to.global.u64 %rd35, %rd11;
+add.s64 %rd36, %rd35, %rd15;
+ld.global.f32 %f21, [%rd36];
+add.f32 %f22, %f20, %f21;
+cvta.to.global.u64 %rd37, %rd12;
+add.s64 %rd38, %rd37, %rd15;
+ld.global.f32 %f23, [%rd38];
+add.f32 %f24, %f22, %f23;
+cvta.to.global.u64 %rd39, %rd13;
+add.s64 %rd40, %rd39, %rd15;
+st.global.f32 [%rd40], %f24;
+
+$L__BB0_2:
+ret;
+
+}
+
+

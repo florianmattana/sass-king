@@ -1,0 +1,109 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+
+.visible .entry _Z13fma_chain_r24PKfS0_S0_Pfi(
+.param .u64 _Z13fma_chain_r24PKfS0_S0_Pfi_param_0,
+.param .u64 _Z13fma_chain_r24PKfS0_S0_Pfi_param_1,
+.param .u64 _Z13fma_chain_r24PKfS0_S0_Pfi_param_2,
+.param .u64 _Z13fma_chain_r24PKfS0_S0_Pfi_param_3,
+.param .u32 _Z13fma_chain_r24PKfS0_S0_Pfi_param_4
+)
+{
+.reg .pred %p<2>;
+.reg .f32 %f<30>;
+.reg .b32 %r<6>;
+.reg .b64 %rd<14>;
+
+
+ld.param.u64 %rd1, [_Z13fma_chain_r24PKfS0_S0_Pfi_param_0];
+ld.param.u64 %rd2, [_Z13fma_chain_r24PKfS0_S0_Pfi_param_1];
+ld.param.u64 %rd3, [_Z13fma_chain_r24PKfS0_S0_Pfi_param_2];
+ld.param.u64 %rd4, [_Z13fma_chain_r24PKfS0_S0_Pfi_param_3];
+ld.param.u32 %r2, [_Z13fma_chain_r24PKfS0_S0_Pfi_param_4];
+mov.u32 %r3, %ctaid.x;
+mov.u32 %r4, %ntid.x;
+mov.u32 %r5, %tid.x;
+mad.lo.s32 %r1, %r3, %r4, %r5;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB0_2;
+
+cvta.to.global.u64 %rd5, %rd1;
+mul.wide.s32 %rd6, %r1, 4;
+add.s64 %rd7, %rd5, %rd6;
+cvta.to.global.u64 %rd8, %rd2;
+add.s64 %rd9, %rd8, %rd6;
+cvta.to.global.u64 %rd10, %rd3;
+add.s64 %rd11, %rd10, %rd6;
+ld.global.f32 %f1, [%rd7];
+add.f32 %f2, %f1, 0f3F800000;
+ld.global.f32 %f3, [%rd9];
+add.f32 %f4, %f3, 0f40000000;
+ld.global.f32 %f5, [%rd11];
+add.f32 %f6, %f5, 0f40400000;
+mul.f32 %f7, %f1, %f3;
+mul.f32 %f8, %f2, %f5;
+mul.f32 %f9, %f4, %f6;
+mul.f32 %f10, %f1, %f6;
+add.f32 %f11, %f7, %f5;
+fma.rn.f32 %f12, %f2, %f4, %f6;
+fma.rn.f32 %f13, %f7, %f8, %f9;
+fma.rn.f32 %f14, %f1, %f10, %f3;
+fma.rn.f32 %f15, %f11, %f12, %f13;
+fma.rn.f32 %f16, %f11, %f14, %f12;
+fma.rn.f32 %f17, %f13, %f14, %f15;
+fma.rn.f32 %f18, %f15, %f16, %f17;
+fma.rn.f32 %f19, %f16, %f17, %f18;
+fma.rn.f32 %f20, %f17, %f18, %f19;
+add.f32 %f21, %f11, %f12;
+add.f32 %f22, %f21, %f13;
+add.f32 %f23, %f22, %f14;
+add.f32 %f24, %f15, %f23;
+add.f32 %f25, %f24, %f16;
+add.f32 %f26, %f17, %f25;
+add.f32 %f27, %f26, %f18;
+add.f32 %f28, %f27, %f19;
+add.f32 %f29, %f28, %f20;
+cvta.to.global.u64 %rd12, %rd4;
+add.s64 %rd13, %rd12, %rd6;
+st.global.f32 [%rd13], %f29;
+
+$L__BB0_2:
+ret;
+
+}
+
+
