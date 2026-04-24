@@ -1,0 +1,85 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+
+.visible .entry _Z10reduce_sumPKiPii(
+.param .u64 _Z10reduce_sumPKiPii_param_0,
+.param .u64 _Z10reduce_sumPKiPii_param_1,
+.param .u32 _Z10reduce_sumPKiPii_param_2
+)
+{
+.reg .pred %p<3>;
+.reg .b32 %r<16>;
+.reg .b64 %rd<9>;
+
+
+ld.param.u64 %rd1, [_Z10reduce_sumPKiPii_param_0];
+ld.param.u64 %rd2, [_Z10reduce_sumPKiPii_param_1];
+ld.param.u32 %r9, [_Z10reduce_sumPKiPii_param_2];
+mov.u32 %r1, %ntid.x;
+mov.u32 %r2, %ctaid.x;
+mov.u32 %r3, %tid.x;
+mad.lo.s32 %r4, %r2, %r1, %r3;
+setp.ge.s32 %p1, %r4, %r9;
+mov.u32 %r15, 0;
+@%p1 bra $L__BB0_2;
+
+cvta.to.global.u64 %rd3, %rd1;
+mul.wide.s32 %rd4, %r4, 4;
+add.s64 %rd5, %rd3, %rd4;
+ld.global.u32 %r15, [%rd5];
+
+$L__BB0_2:
+mov.u32 %r10, -1;
+redux.sync.add.s32 %r7, %r15, %r10;
+and.b32 %r11, %r3, 31;
+setp.ne.s32 %p2, %r11, 0;
+@%p2 bra $L__BB0_4;
+
+shr.u32 %r12, %r1, 5;
+shr.u32 %r13, %r3, 5;
+mad.lo.s32 %r14, %r12, %r2, %r13;
+cvta.to.global.u64 %rd6, %rd2;
+mul.wide.u32 %rd7, %r14, 4;
+add.s64 %rd8, %rd6, %rd7;
+st.global.u32 [%rd8], %r7;
+
+$L__BB0_4:
+ret;
+
+}
+
+
