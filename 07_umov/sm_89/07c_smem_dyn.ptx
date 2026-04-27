@@ -1,0 +1,84 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+.extern .shared .align 16 .b8 smem[];
+
+.visible .entry _Z8smem_dynPKfPfi(
+.param .u64 _Z8smem_dynPKfPfi_param_0,
+.param .u64 _Z8smem_dynPKfPfi_param_1,
+.param .u32 _Z8smem_dynPKfPfi_param_2
+)
+{
+.reg .pred %p<2>;
+.reg .f32 %f<3>;
+.reg .b32 %r<13>;
+.reg .b64 %rd<8>;
+
+
+ld.param.u64 %rd1, [_Z8smem_dynPKfPfi_param_0];
+ld.param.u64 %rd2, [_Z8smem_dynPKfPfi_param_1];
+ld.param.u32 %r4, [_Z8smem_dynPKfPfi_param_2];
+mov.u32 %r5, %ctaid.x;
+mov.u32 %r1, %ntid.x;
+mov.u32 %r2, %tid.x;
+mad.lo.s32 %r3, %r5, %r1, %r2;
+setp.ge.s32 %p1, %r3, %r4;
+@%p1 bra $L__BB0_2;
+
+cvta.to.global.u64 %rd3, %rd1;
+mul.wide.s32 %rd4, %r3, 4;
+add.s64 %rd5, %rd3, %rd4;
+ld.global.f32 %f1, [%rd5];
+shl.b32 %r6, %r2, 2;
+mov.u32 %r7, smem;
+add.s32 %r8, %r7, %r6;
+st.shared.f32 [%r8], %f1;
+bar.sync 0;
+add.s32 %r9, %r2, 1;
+rem.u32 %r10, %r9, %r1;
+shl.b32 %r11, %r10, 2;
+add.s32 %r12, %r7, %r11;
+ld.shared.f32 %f2, [%r12];
+cvta.to.global.u64 %rd6, %rd2;
+add.s64 %rd7, %rd6, %rd4;
+st.global.f32 [%rd7], %f2;
+
+$L__BB0_2:
+ret;
+
+}
+
+
