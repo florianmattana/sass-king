@@ -1,0 +1,133 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+.func (.param .b32 func_retval0) _Z14heavy_functionfff(
+.param .b32 _Z14heavy_functionfff_param_0,
+.param .b32 _Z14heavy_functionfff_param_1,
+.param .b32 _Z14heavy_functionfff_param_2
+)
+{
+.reg .f32 %f<8>;
+
+
+ld.param.f32 %f1, [_Z14heavy_functionfff_param_0];
+ld.param.f32 %f2, [_Z14heavy_functionfff_param_1];
+ld.param.f32 %f3, [_Z14heavy_functionfff_param_2];
+fma.rn.f32 %f4, %f1, %f2, %f3;
+fma.rn.f32 %f5, %f2, %f3, %f1;
+fma.rn.f32 %f6, %f1, %f3, %f2;
+fma.rn.f32 %f7, %f4, %f5, %f6;
+st.param.f32 [func_retval0+0], %f7;
+ret;
+
+}
+
+.visible .entry _Z20call_with_live_statePKfS0_S0_Pfi(
+.param .u64 _Z20call_with_live_statePKfS0_S0_Pfi_param_0,
+.param .u64 _Z20call_with_live_statePKfS0_S0_Pfi_param_1,
+.param .u64 _Z20call_with_live_statePKfS0_S0_Pfi_param_2,
+.param .u64 _Z20call_with_live_statePKfS0_S0_Pfi_param_3,
+.param .u32 _Z20call_with_live_statePKfS0_S0_Pfi_param_4
+)
+{
+.reg .pred %p<2>;
+.reg .f32 %f<17>;
+.reg .b32 %r<6>;
+.reg .b64 %rd<14>;
+
+
+ld.param.u64 %rd1, [_Z20call_with_live_statePKfS0_S0_Pfi_param_0];
+ld.param.u64 %rd2, [_Z20call_with_live_statePKfS0_S0_Pfi_param_1];
+ld.param.u64 %rd3, [_Z20call_with_live_statePKfS0_S0_Pfi_param_2];
+ld.param.u64 %rd4, [_Z20call_with_live_statePKfS0_S0_Pfi_param_3];
+ld.param.u32 %r2, [_Z20call_with_live_statePKfS0_S0_Pfi_param_4];
+mov.u32 %r3, %ctaid.x;
+mov.u32 %r4, %ntid.x;
+mov.u32 %r5, %tid.x;
+mad.lo.s32 %r1, %r3, %r4, %r5;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB1_2;
+
+cvta.to.global.u64 %rd5, %rd1;
+mul.wide.s32 %rd6, %r1, 4;
+add.s64 %rd7, %rd5, %rd6;
+cvta.to.global.u64 %rd8, %rd2;
+add.s64 %rd9, %rd8, %rd6;
+cvta.to.global.u64 %rd10, %rd3;
+add.s64 %rd11, %rd10, %rd6;
+ld.global.f32 %f1, [%rd7];
+add.f32 %f2, %f1, 0f3F800000;
+ld.global.f32 %f3, [%rd9];
+add.f32 %f4, %f3, 0f40000000;
+ld.global.f32 %f5, [%rd11];
+add.f32 %f6, %f5, 0f40400000;
+{ 
+.reg .b32 temp_param_reg;
+.param .b32 param0;
+st.param.f32 [param0+0], %f1;
+.param .b32 param1;
+st.param.f32 [param1+0], %f3;
+.param .b32 param2;
+st.param.f32 [param2+0], %f5;
+.param .b32 retval0;
+call.uni (retval0), 
+_Z14heavy_functionfff, 
+(
+param0, 
+param1, 
+param2
+);
+ld.param.f32 %f7, [retval0+0];
+} 
+add.f32 %f8, %f1, %f7;
+add.f32 %f9, %f3, %f8;
+add.f32 %f10, %f5, %f9;
+add.f32 %f11, %f2, %f10;
+add.f32 %f12, %f4, %f11;
+add.f32 %f13, %f6, %f12;
+fma.rn.f32 %f14, %f1, %f3, %f13;
+fma.rn.f32 %f15, %f2, %f5, %f14;
+fma.rn.f32 %f16, %f4, %f6, %f15;
+cvta.to.global.u64 %rd12, %rd4;
+add.s64 %rd13, %rd12, %rd6;
+st.global.f32 [%rd13], %f16;
+
+$L__BB1_2:
+ret;
+
+}
+
+

@@ -1,0 +1,197 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+.func (.param .b32 func_retval0) _Z9combine16ffffffffffffffff(
+.param .b32 _Z9combine16ffffffffffffffff_param_0,
+.param .b32 _Z9combine16ffffffffffffffff_param_1,
+.param .b32 _Z9combine16ffffffffffffffff_param_2,
+.param .b32 _Z9combine16ffffffffffffffff_param_3,
+.param .b32 _Z9combine16ffffffffffffffff_param_4,
+.param .b32 _Z9combine16ffffffffffffffff_param_5,
+.param .b32 _Z9combine16ffffffffffffffff_param_6,
+.param .b32 _Z9combine16ffffffffffffffff_param_7,
+.param .b32 _Z9combine16ffffffffffffffff_param_8,
+.param .b32 _Z9combine16ffffffffffffffff_param_9,
+.param .b32 _Z9combine16ffffffffffffffff_param_10,
+.param .b32 _Z9combine16ffffffffffffffff_param_11,
+.param .b32 _Z9combine16ffffffffffffffff_param_12,
+.param .b32 _Z9combine16ffffffffffffffff_param_13,
+.param .b32 _Z9combine16ffffffffffffffff_param_14,
+.param .b32 _Z9combine16ffffffffffffffff_param_15
+)
+{
+.reg .f32 %f<26>;
+
+
+ld.param.f32 %f1, [_Z9combine16ffffffffffffffff_param_0];
+ld.param.f32 %f2, [_Z9combine16ffffffffffffffff_param_1];
+ld.param.f32 %f3, [_Z9combine16ffffffffffffffff_param_2];
+ld.param.f32 %f4, [_Z9combine16ffffffffffffffff_param_3];
+ld.param.f32 %f5, [_Z9combine16ffffffffffffffff_param_4];
+ld.param.f32 %f6, [_Z9combine16ffffffffffffffff_param_5];
+ld.param.f32 %f7, [_Z9combine16ffffffffffffffff_param_6];
+ld.param.f32 %f8, [_Z9combine16ffffffffffffffff_param_7];
+ld.param.f32 %f9, [_Z9combine16ffffffffffffffff_param_8];
+ld.param.f32 %f10, [_Z9combine16ffffffffffffffff_param_9];
+ld.param.f32 %f11, [_Z9combine16ffffffffffffffff_param_10];
+ld.param.f32 %f12, [_Z9combine16ffffffffffffffff_param_11];
+ld.param.f32 %f13, [_Z9combine16ffffffffffffffff_param_12];
+ld.param.f32 %f14, [_Z9combine16ffffffffffffffff_param_13];
+ld.param.f32 %f15, [_Z9combine16ffffffffffffffff_param_14];
+ld.param.f32 %f16, [_Z9combine16ffffffffffffffff_param_15];
+fma.rn.f32 %f17, %f1, %f2, %f3;
+fma.rn.f32 %f18, %f4, %f5, %f6;
+fma.rn.f32 %f19, %f7, %f8, %f9;
+fma.rn.f32 %f20, %f10, %f11, %f12;
+fma.rn.f32 %f21, %f13, %f14, %f15;
+add.f32 %f22, %f17, %f18;
+add.f32 %f23, %f22, %f19;
+add.f32 %f24, %f23, %f20;
+fma.rn.f32 %f25, %f21, %f16, %f24;
+st.param.f32 [func_retval0+0], %f25;
+ret;
+
+}
+
+.visible .entry _Z9many_argsPKfPfi(
+.param .u64 _Z9many_argsPKfPfi_param_0,
+.param .u64 _Z9many_argsPKfPfi_param_1,
+.param .u32 _Z9many_argsPKfPfi_param_2
+)
+{
+.reg .pred %p<2>;
+.reg .f32 %f<19>;
+.reg .b32 %r<6>;
+.reg .b64 %rd<8>;
+
+
+ld.param.u64 %rd1, [_Z9many_argsPKfPfi_param_0];
+ld.param.u64 %rd2, [_Z9many_argsPKfPfi_param_1];
+ld.param.u32 %r2, [_Z9many_argsPKfPfi_param_2];
+mov.u32 %r3, %ctaid.x;
+mov.u32 %r4, %ntid.x;
+mov.u32 %r5, %tid.x;
+mad.lo.s32 %r1, %r3, %r4, %r5;
+setp.ge.s32 %p1, %r1, %r2;
+@%p1 bra $L__BB1_2;
+
+cvta.to.global.u64 %rd3, %rd1;
+mul.wide.s32 %rd4, %r1, 4;
+add.s64 %rd5, %rd3, %rd4;
+ld.global.f32 %f1, [%rd5];
+add.f32 %f2, %f1, 0f3F800000;
+add.f32 %f3, %f1, 0f40000000;
+add.f32 %f4, %f1, 0f40400000;
+add.f32 %f5, %f1, 0f40800000;
+add.f32 %f6, %f1, 0f40A00000;
+add.f32 %f7, %f1, 0f40C00000;
+add.f32 %f8, %f1, 0f40E00000;
+add.f32 %f9, %f1, 0f41000000;
+add.f32 %f10, %f1, 0f41100000;
+add.f32 %f11, %f1, 0f41200000;
+add.f32 %f12, %f1, 0f41300000;
+add.f32 %f13, %f1, 0f41400000;
+add.f32 %f14, %f1, 0f41500000;
+add.f32 %f15, %f1, 0f41600000;
+add.f32 %f16, %f1, 0f41700000;
+{ 
+.reg .b32 temp_param_reg;
+.param .b32 param0;
+st.param.f32 [param0+0], %f1;
+.param .b32 param1;
+st.param.f32 [param1+0], %f2;
+.param .b32 param2;
+st.param.f32 [param2+0], %f3;
+.param .b32 param3;
+st.param.f32 [param3+0], %f4;
+.param .b32 param4;
+st.param.f32 [param4+0], %f5;
+.param .b32 param5;
+st.param.f32 [param5+0], %f6;
+.param .b32 param6;
+st.param.f32 [param6+0], %f7;
+.param .b32 param7;
+st.param.f32 [param7+0], %f8;
+.param .b32 param8;
+st.param.f32 [param8+0], %f9;
+.param .b32 param9;
+st.param.f32 [param9+0], %f10;
+.param .b32 param10;
+st.param.f32 [param10+0], %f11;
+.param .b32 param11;
+st.param.f32 [param11+0], %f12;
+.param .b32 param12;
+st.param.f32 [param12+0], %f13;
+.param .b32 param13;
+st.param.f32 [param13+0], %f14;
+.param .b32 param14;
+st.param.f32 [param14+0], %f15;
+.param .b32 param15;
+st.param.f32 [param15+0], %f16;
+.param .b32 retval0;
+call.uni (retval0), 
+_Z9combine16ffffffffffffffff, 
+(
+param0, 
+param1, 
+param2, 
+param3, 
+param4, 
+param5, 
+param6, 
+param7, 
+param8, 
+param9, 
+param10, 
+param11, 
+param12, 
+param13, 
+param14, 
+param15
+);
+ld.param.f32 %f17, [retval0+0];
+} 
+add.f32 %f18, %f1, %f17;
+cvta.to.global.u64 %rd6, %rd2;
+add.s64 %rd7, %rd6, %rd4;
+st.global.f32 [%rd7], %f18;
+
+$L__BB1_2:
+ret;
+
+}
+
+
