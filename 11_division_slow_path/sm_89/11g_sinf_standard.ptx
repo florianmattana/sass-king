@@ -1,0 +1,211 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+.global .align 4 .b8 __cudart_i2opi_f[24] = {65, 144, 67, 60, 153, 149, 98, 219, 192, 221, 52, 245, 209, 87, 39, 252, 41, 21, 68, 78, 110, 131, 249, 162};
+
+.visible .entry _Z13sinf_standardPKfPfi(
+.param .u64 _Z13sinf_standardPKfPfi_param_0,
+.param .u64 _Z13sinf_standardPKfPfi_param_1,
+.param .u32 _Z13sinf_standardPKfPfi_param_2
+)
+{
+.local .align 4 .b8 __local_depot0[28];
+.reg .b64 %SP;
+.reg .b64 %SPL;
+.reg .pred %p<12>;
+.reg .f32 %f<38>;
+.reg .b32 %r<59>;
+.reg .f64 %fd<3>;
+.reg .b64 %rd<31>;
+
+
+mov.u64 %SPL, __local_depot0;
+ld.param.u64 %rd9, [_Z13sinf_standardPKfPfi_param_0];
+ld.param.u64 %rd10, [_Z13sinf_standardPKfPfi_param_1];
+ld.param.u32 %r20, [_Z13sinf_standardPKfPfi_param_2];
+add.u64 %rd1, %SPL, 0;
+mov.u32 %r21, %ntid.x;
+mov.u32 %r22, %ctaid.x;
+mov.u32 %r23, %tid.x;
+mad.lo.s32 %r1, %r22, %r21, %r23;
+setp.ge.s32 %p1, %r1, %r20;
+@%p1 bra $L__BB0_14;
+
+cvta.to.global.u64 %rd12, %rd9;
+cvt.s64.s32 %rd2, %r1;
+mul.wide.s32 %rd13, %r1, 4;
+add.s64 %rd14, %rd12, %rd13;
+ld.global.f32 %f1, [%rd14];
+mul.f32 %f14, %f1, 0f3F22F983;
+cvt.rni.s32.f32 %r58, %f14;
+cvt.rn.f32.s32 %f15, %r58;
+mov.f32 %f16, 0fBFC90FDA;
+fma.rn.f32 %f17, %f15, %f16, %f1;
+mov.f32 %f18, 0fB3A22168;
+fma.rn.f32 %f19, %f15, %f18, %f17;
+mov.f32 %f20, 0fA7C234C5;
+fma.rn.f32 %f35, %f15, %f20, %f19;
+abs.f32 %f3, %f1;
+setp.ltu.f32 %p2, %f3, 0f47CE4780;
+@%p2 bra $L__BB0_9;
+
+setp.eq.f32 %p3, %f3, 0f7F800000;
+@%p3 bra $L__BB0_8;
+bra.uni $L__BB0_3;
+
+$L__BB0_8:
+mov.f32 %f23, 0f00000000;
+mul.rn.f32 %f35, %f1, %f23;
+mov.u32 %r58, 0;
+bra.uni $L__BB0_9;
+
+$L__BB0_3:
+mov.b32 %r3, %f1;
+shr.u32 %r25, %r3, 23;
+and.b32 %r26, %r25, 255;
+add.s32 %r4, %r26, -128;
+shl.b32 %r27, %r3, 8;
+or.b32 %r5, %r27, -2147483648;
+shr.u32 %r6, %r4, 5;
+mov.u64 %rd30, 0;
+mov.u32 %r55, 0;
+mov.u64 %rd29, __cudart_i2opi_f;
+mov.u64 %rd28, %rd1;
+
+$L__BB0_4:
+.pragma "nounroll";
+ld.global.nc.u32 %r28, [%rd29];
+mad.wide.u32 %rd17, %r28, %r5, %rd30;
+shr.u64 %rd30, %rd17, 32;
+st.local.u32 [%rd28], %rd17;
+add.s64 %rd29, %rd29, 4;
+add.s64 %rd28, %rd28, 4;
+add.s32 %r55, %r55, 1;
+setp.ne.s32 %p4, %r55, 6;
+@%p4 bra $L__BB0_4;
+
+st.local.u32 [%rd1+24], %rd30;
+mov.u32 %r29, 4;
+sub.s32 %r9, %r29, %r6;
+mov.u32 %r30, 6;
+sub.s32 %r31, %r30, %r6;
+mul.wide.s32 %rd18, %r31, 4;
+add.s64 %rd19, %rd1, %rd18;
+ld.local.u32 %r56, [%rd19];
+ld.local.u32 %r57, [%rd19+-4];
+and.b32 %r12, %r4, 31;
+setp.eq.s32 %p5, %r12, 0;
+@%p5 bra $L__BB0_7;
+
+mov.u32 %r32, 32;
+sub.s32 %r33, %r32, %r12;
+shr.u32 %r34, %r57, %r33;
+shl.b32 %r35, %r56, %r12;
+add.s32 %r56, %r34, %r35;
+mul.wide.s32 %rd20, %r9, 4;
+add.s64 %rd21, %rd1, %rd20;
+ld.local.u32 %r36, [%rd21];
+shr.u32 %r37, %r36, %r33;
+shl.b32 %r38, %r57, %r12;
+add.s32 %r57, %r37, %r38;
+
+$L__BB0_7:
+and.b32 %r39, %r3, -2147483648;
+shr.u32 %r40, %r57, 30;
+shl.b32 %r41, %r56, 2;
+or.b32 %r42, %r40, %r41;
+shr.u32 %r43, %r42, 31;
+shr.u32 %r44, %r56, 30;
+add.s32 %r45, %r43, %r44;
+neg.s32 %r46, %r45;
+setp.eq.s32 %p6, %r39, 0;
+selp.b32 %r58, %r45, %r46, %p6;
+setp.ne.s32 %p7, %r43, 0;
+xor.b32 %r47, %r39, -2147483648;
+selp.b32 %r48, %r47, %r39, %p7;
+selp.b32 %r49, -1, 0, %p7;
+xor.b32 %r50, %r42, %r49;
+shl.b32 %r51, %r57, 2;
+xor.b32 %r52, %r51, %r49;
+cvt.u64.u32 %rd22, %r50;
+cvt.u64.u32 %rd23, %r52;
+bfi.b64 %rd24, %rd22, %rd23, 32, 32;
+cvt.rn.f64.s64 %fd1, %rd24;
+mul.f64 %fd2, %fd1, 0d3BF921FB54442D19;
+cvt.rn.f32.f64 %f21, %fd2;
+setp.eq.s32 %p8, %r48, 0;
+neg.f32 %f22, %f21;
+selp.f32 %f35, %f21, %f22, %p8;
+
+$L__BB0_9:
+and.b32 %r19, %r58, 1;
+setp.eq.s32 %p9, %r19, 0;
+selp.f32 %f7, %f35, 0f3F800000, %p9;
+mul.rn.f32 %f8, %f35, %f35;
+mov.f32 %f36, 0fB94D4153;
+@%p9 bra $L__BB0_11;
+
+mov.f32 %f25, 0fBAB607ED;
+mov.f32 %f26, 0f37CBAC00;
+fma.rn.f32 %f36, %f26, %f8, %f25;
+
+$L__BB0_11:
+selp.f32 %f27, 0f3C0885E4, 0f3D2AAABB, %p9;
+fma.rn.f32 %f28, %f36, %f8, %f27;
+selp.f32 %f29, 0fBE2AAAA8, 0fBEFFFFFF, %p9;
+fma.rn.f32 %f30, %f28, %f8, %f29;
+mov.f32 %f31, 0f00000000;
+fma.rn.f32 %f32, %f8, %f7, %f31;
+fma.rn.f32 %f37, %f30, %f32, %f7;
+and.b32 %r54, %r58, 2;
+setp.eq.s32 %p11, %r54, 0;
+@%p11 bra $L__BB0_13;
+
+mov.f32 %f34, 0fBF800000;
+fma.rn.f32 %f37, %f37, %f34, %f31;
+
+$L__BB0_13:
+cvta.to.global.u64 %rd25, %rd10;
+shl.b64 %rd26, %rd2, 2;
+add.s64 %rd27, %rd25, %rd26;
+st.global.f32 [%rd27], %f37;
+
+$L__BB0_14:
+ret;
+
+}
+
+
