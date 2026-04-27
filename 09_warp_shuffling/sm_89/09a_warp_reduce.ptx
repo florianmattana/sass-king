@@ -1,0 +1,111 @@
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin elf code:
+================
+arch = sm_89
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+Fatbin ptx code:
+================
+arch = sm_89
+code version = [9,2]
+host = linux
+compile_size = 64bit
+compressed
+ptxasOptions = 
+
+
+
+
+
+
+
+
+.version 9.2
+.target sm_89
+.address_size 64
+
+
+
+.visible .entry _Z11warp_reducePKfPfi(
+.param .u64 _Z11warp_reducePKfPfi_param_0,
+.param .u64 _Z11warp_reducePKfPfi_param_1,
+.param .u32 _Z11warp_reducePKfPfi_param_2
+)
+{
+.reg .pred %p<8>;
+.reg .f32 %f<15>;
+.reg .b32 %r<27>;
+.reg .b64 %rd<9>;
+
+
+ld.param.u64 %rd1, [_Z11warp_reducePKfPfi_param_0];
+ld.param.u64 %rd2, [_Z11warp_reducePKfPfi_param_1];
+ld.param.u32 %r5, [_Z11warp_reducePKfPfi_param_2];
+mov.u32 %r1, %ntid.x;
+mov.u32 %r2, %ctaid.x;
+mov.u32 %r3, %tid.x;
+mad.lo.s32 %r4, %r2, %r1, %r3;
+setp.ge.s32 %p1, %r4, %r5;
+mov.f32 %f14, 0f00000000;
+@%p1 bra $L__BB0_2;
+
+cvta.to.global.u64 %rd3, %rd1;
+mul.wide.s32 %rd4, %r4, 4;
+add.s64 %rd5, %rd3, %rd4;
+ld.global.f32 %f14, [%rd5];
+
+$L__BB0_2:
+mov.b32 %r6, %f14;
+mov.u32 %r7, 31;
+mov.u32 %r8, 16;
+mov.u32 %r9, -1;
+shfl.sync.bfly.b32 %r10|%p2, %r6, %r8, %r7, %r9;
+mov.b32 %f5, %r10;
+add.f32 %f6, %f14, %f5;
+mov.b32 %r11, %f6;
+mov.u32 %r12, 8;
+shfl.sync.bfly.b32 %r13|%p3, %r11, %r12, %r7, %r9;
+mov.b32 %f7, %r13;
+add.f32 %f8, %f6, %f7;
+mov.b32 %r14, %f8;
+mov.u32 %r15, 4;
+shfl.sync.bfly.b32 %r16|%p4, %r14, %r15, %r7, %r9;
+mov.b32 %f9, %r16;
+add.f32 %f10, %f8, %f9;
+mov.b32 %r17, %f10;
+mov.u32 %r18, 2;
+shfl.sync.bfly.b32 %r19|%p5, %r17, %r18, %r7, %r9;
+mov.b32 %f11, %r19;
+add.f32 %f12, %f10, %f11;
+mov.b32 %r20, %f12;
+mov.u32 %r21, 1;
+shfl.sync.bfly.b32 %r22|%p6, %r20, %r21, %r7, %r9;
+mov.b32 %f13, %r22;
+add.f32 %f3, %f12, %f13;
+and.b32 %r23, %r3, 31;
+setp.ne.s32 %p7, %r23, 0;
+@%p7 bra $L__BB0_4;
+
+shr.u32 %r24, %r1, 5;
+shr.u32 %r25, %r3, 5;
+mad.lo.s32 %r26, %r24, %r2, %r25;
+cvta.to.global.u64 %rd6, %rd2;
+mul.wide.u32 %rd7, %r26, 4;
+add.s64 %rd8, %rd6, %rd7;
+st.global.f32 [%rd8], %f3;
+
+$L__BB0_4:
+ret;
+
+}
+
+
