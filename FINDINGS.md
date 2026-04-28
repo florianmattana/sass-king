@@ -1195,7 +1195,50 @@ When you see a QMMA in a production kernel:
 
 ## Kernel 15 MMA narrow (FP6, FP4 at k=32)
 
-[WIP]
+Chapter 15 closes the remaining narrow-QMMA dtype combination that chapter 14 did not explicitly test. Most planned chapter 15 variants were already observed in chapter 14: 14g (E3M2 × E3M2), 14h (E2M3 × E2M3), 14d (E2M1 × E2M1), and 14i (E4M3 × E2M1).
+
+### Variants and outcomes
+* [OBS] 15c (E3M2 × E2M3, F32 accumulator, m16n8k32): compiled as `QMMA.16832.F32.E3M2.E2M3 R12, R12, R16, R20`.
+* [OBS] 15c opcode bytes are `0x000000100c0c727a`, identical to chapter 14 QMMA variants with the same operand bases.
+* [OBS] 15c control code is `0x004ff60000246c14`.
+* [OBS] 15c dump contains 40 total instructions including padding and trap, and 31 instructions through `EXIT`.
+* [OBS] 15c top mnemonics by frequency: 10 `LDG.E.CONSTANT`, 8 `NOP`, 4 `LDC.64`, 4 `IMAD.WIDE.U32`, 4 `STG.E`, 2 `SHF.L.U32`, 2 `@!UPT UIADD3` semantic NOPs, 1 `QMMA.16832.F32.E3M2.E2M3`.
+* [OBS] 15f raw FP6 probe compiles to `QMMA.16832.F32.E3M2.E3M2 R12, R12, R16, R20` with control code `0x004ff6000014ec14`.
+* [OBS] 15g raw FP4 probe compiles to `QMMA.16832.F32.E2M1.E2M1 R12, R12, R16, R20` with control code `0x004ff6000028ec14`.
+* [OBS] 15h unscaled FP4 latency source compiles N=16/32/64 chains of `QMMA.16832.F32.E2M1.E2M1 R16, R4, R2, R16`; the first chained QMMA has control code `0x084ff6000028ec10`.
+* [OBS] 15i mixed FP6 latency source compiles N=16/32/64 chains of `QMMA.16832.F32.E3M2.E2M3 R16, R4, R2, R16`; the first chained QMMA has control code `0x084ff60000246c10`.
+* [OBS] 15j FP16-accumulator narrow-input variant compiles to `QMMA.16832.F16.E3M2.E3M2 R12, R12, R16, R18` with control code `0x004ff6000014cc12`.
+* [OBS] 15k reversed mixed-FP6 variant compiles to `QMMA.16832.F32.E2M3.E3M2 R12, R12, R16, R20` with control code `0x004ff6000018ac14`.
+* [OBS] Runtime execution and latency measurement were blocked in this environment because `nvidia-smi` could not communicate with the NVIDIA driver.
+
+### Cross-reference to chapter 14
+* [OBS] 14g already established `QMMA.16832.F32.E3M2.E3M2` with control code `0x004ff6000014ec14`.
+* [OBS] 14h already established `QMMA.16832.F32.E2M3.E2M3` with control code `0x004ff60000282c14`.
+* [OBS] 14d already established `QMMA.16832.F32.E2M1.E2M1` with control code `0x004ff6000028ec14`.
+* [OBS] 14i already established mixed `QMMA.16832.F32.E4M3.E2M1` with control code `0x004ff6000020ac14`.
+* [INF] 15c validates the chapter 14 per-operand dtype model for the remaining mixed FP6 case: base E4M3/E4M3 control code `0x004ff60000002c14` plus A=E3M2 bits 14 and 18 plus B=E2M3 bit 21 gives predicted `0x004ff60000246c14`, which matches the observed 15c control code exactly.
+* [INF] 15k validates the mirror case: base E4M3/E4M3 control code `0x004ff60000002c14` plus A=E2M3 bit 19 plus B=E3M2 bits 15 and 20 gives predicted `0x004ff6000018ac14`, which matches the observed 15k control code exactly.
+* [INF] 15j confirms the chapter 14 accumulator dtype encoding carries over to FP6 inputs: F16 accumulator changes the low control bits from F32 form while preserving E3M2 input bits.
+* [RES] Chapter 15 question "Does FP6 have a distinct SASS opcode from FP8?" is resolved: no distinct opcode was observed. E3M2 and E2M3 use the same QMMA opcode family (`0x7a`) with dtype encoded in control-code bits, consistent with chapter 14.
+* [RES] Chapter 15 question "Does mixed FP6 use orthogonal operand dtype encoding?" is resolved: the E3M2 × E2M3 control code equals the bitwise composition predicted from the symmetric FP6 cases.
+* [RES] Chapter 15 operand-order asymmetry test resolved the control-code part: reversing E3M2/E2M3 mirrors the A/B dtype bits exactly. Value-layout asymmetry remains untested at runtime in this environment.
+
+### Open gaps
+* [GAP] FP6 element packing inside the A/B uint32 fragments remains undocumented. 15f provides a raw-pattern probe source and SASS dump, but runtime data is blocked until the NVIDIA driver is available.
+* [GAP] FP4 E2M1 fragment layout remains unresolved from GAP-14d-1. 15g provides a raw-nibble probe source and SASS dump, but runtime data is blocked until the NVIDIA driver is available.
+* [GAP] Unscaled E2M1 QMMA latency is not measured. 15h compiles the intended N=16/32/64 chains, but runtime timing is blocked by the unavailable NVIDIA driver.
+* [GAP] Mixed FP6 E3M2 × E2M3 latency is not measured. 15i compiles the intended N=16/32/64 chains, but runtime timing is blocked by the unavailable NVIDIA driver.
+* [GAP] The SASS-level cause of the k=32 FP4 throughput gap versus k=64 block-scaled OMMA remains chapter 16's shape/family distinction until 15h can be run on hardware.
+
+### New instructions observed in this chapter
+| Opcode | Usage |
+|---|---|
+| QMMA.16832.F32.E3M2.E2M3 | Mixed FP6 m16n8k32 MMA with FP32 accumulator |
+| QMMA.16832.F32.E2M3.E3M2 | Reversed mixed FP6 m16n8k32 MMA with FP32 accumulator |
+| QMMA.16832.F16.E3M2.E3M2 | FP6 m16n8k32 MMA with FP16 accumulator |
+
+### Diagnostic update
+* [INF] For `kind::f8f6f4` production audits, all observed FP8, FP6, FP4, and mixed narrow combinations remain under `QMMA.16832` for k=32. Narrow input dtype changes the mnemonic suffix and control-code dtype bits, not the opcode family.
 
 ---
 
