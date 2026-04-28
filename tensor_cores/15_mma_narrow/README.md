@@ -11,6 +11,12 @@ FP6 and FP4 variants at shape m16n8k32 with `kind::f8f6f4`. FP4 at k=32 does not
 | 15c | e3m2 | e2m3 | f32 | 32 | Mixed FP6 |
 | 15d | e2m1 | e2m1 | f32 | 32 | FP4 at k=32 (sub-peak reference) |
 | 15e | e4m3 | e2m1 | f32 | 32 | Mixed FP8 + FP4 (cross-precision) |
+| 15f | e3m2 | e3m2 | f32 | 32 | Raw FP6 layout probe |
+| 15g | e2m1 | e2m1 | f32 | 32 | Raw FP4 layout probe |
+| 15h | e2m1 | e2m1 | f32 | 32 | Unscaled FP4 latency chain |
+| 15i | e3m2 | e2m3 | f32 | 32 | Mixed FP6 latency chain |
+| 15j | e3m2 | e3m2 | f16 | 32 | Narrow input with FP16 accumulator |
+| 15k | e2m3 | e3m2 | f32 | 32 | Reversed mixed FP6 |
 
 ## Key questions
 
@@ -28,12 +34,18 @@ FP6 and FP4 variants at shape m16n8k32 with `kind::f8f6f4`. FP4 at k=32 does not
 
 ## Status
 
-* [ ] 15a e3m2 e3m2 f32
-* [ ] 15b e2m3 e2m3 f32
-* [ ] 15c e3m2 e2m3 f32 mixed
-* [ ] 15d e2m1 e2m1 f32 at k=32 (sub-peak)
-* [ ] 15e e4m3 e2m1 f32 mixed
-* [ ] conclusion15.md
+* [x] 15a e3m2 e3m2 f32 — covered by 14g
+* [x] 15b e2m3 e2m3 f32 — covered by 14h
+* [x] 15c e3m2 e2m3 f32 mixed — added in this chapter
+* [x] 15d e2m1 e2m1 f32 at k=32 (sub-peak) — covered by 14d
+* [x] 15e e4m3 e2m1 f32 mixed — covered by 14i
+* [x] 15f raw FP6 probe — source and SASS added, runtime blocked by unavailable NVIDIA driver
+* [x] 15g raw FP4 probe — source and SASS added, runtime blocked by unavailable NVIDIA driver
+* [x] 15h unscaled FP4 latency — source and SASS added for N=16/32/64, runtime blocked by unavailable NVIDIA driver
+* [x] 15i mixed FP6 latency — source and SASS added for N=16/32/64, runtime blocked by unavailable NVIDIA driver
+* [x] 15j e3m2 e3m2 f16 accumulator — source and SASS added
+* [x] 15k e2m3 e3m2 f32 reversed mixed — source and SASS added
+* [x] conclusion15.md
 
 ## Dependencies
 

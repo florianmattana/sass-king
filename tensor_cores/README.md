@@ -30,7 +30,7 @@ Not in scope on SM120 (architecturally unavailable):
 |---|---|---|
 | [13_hmma_fp16/](./13_hmma_fp16/) | HMMA baseline: f16, bf16 at m16n8k16 | New SASS opcode family `HMMA.16816.<acc>`, serial latency ~35 cycles/HMMA |
 | [14_qmma_fp8/](./14_qmma_fp8/) | FP8/FP6/FP4 non-scaled, kind::f8f6f4, m16n8k32 | New SASS opcode `QMMA.16832.<acc>.<A>.<B>`, dtype encoding decoded by Popper-style prediction |
-| [15_mma_narrow/](./15_mma_narrow/) | FP6 and FP4 mixed-precision variants | Planned (partially covered by chapter 14) |
+| [15_mma_narrow/](./15_mma_narrow/) | FP6 and FP4 mixed-precision variants | Complete for SASS encoding: mixed FP6, reversed mixed FP6, FP16 accumulator, and latency/probe sources added |
 | [16_fp4_peak/](./16_fp4_peak/) | FP4 peak block-scaled (kind::mxf8f6f4 and kind::mxf4nvf4, 900+ TFLOPS path) | New SASS opcode family `OMMA` (low byte 0x7f). `.SF` modifier for block scaling. `.UE4M3.4X` suffix identifies the peak path. OMMA cycles/MMA ~29 (vs ~35 HMMA/QMMA) |
 | [17_ldmatrix/](./17_ldmatrix/) | `ldmatrix` (6 variants: x1/x2/x4 × trans/no-trans) | New opcode `LDSM.16.M[T]88[.N]`, production pattern captured |
 | [18_pipelined_tile/](./18_pipelined_tile/) | Full pipelined GEMM tile with cp.async, LDSM, HMMA | Three new opcodes: LDGSTS, LDGDEPBAR, DEPBAR.LE. Full production pipeline decoded |
@@ -54,7 +54,7 @@ The per-chapter `conclusion{N}.md` files here document the narrative of the chap
 |---|---|---|---|
 | 13 | **Done** | 13a-13e (5) | HMMA.16816.F32, HMMA.16816.F16 |
 | 14 | **Done** | 14a-14j (10) | QMMA.16832.\<acc>.\<A>.\<B> |
-| 15 | Planned | - | - |
+| 15 | **Done** | 15c, 15f-15k + chapter 14 cross-references | QMMA.16832.F32.E3M2.E2M3, QMMA.16832.F16.E3M2.E3M2 |
 | 16 | **Done** | 16a-16d (4) | QMMA.SF, OMMA.SF.16864, OMMA.SF.16864.UE4M3.4X |
 | 17 | **Done** | 17a-17f (6) | LDSM.16.M\[T\]88\[.N\] |
 | 18 | **Done** | 18a-18c (3) | LDGSTS.E.LTC128B.128, LDGDEPBAR, DEPBAR.LE SB0, N |
