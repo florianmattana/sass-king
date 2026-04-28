@@ -1,8 +1,8 @@
-# Chapter 20 — Control flow: loops, unroll, back-edges, BSSY/BSYNC (PLAN)
+# Chapter 20 - Control flow: loops, unroll, back-edges, BSSY/BSYNC
 
-Status: **planned, not yet executed**.
+Status: **executed**. See `README.md`, `conclusion20.md`, and `FINDINGS.md`.
 
-This plan was drafted after an initial attempt to audit a production kernel (fused FP4 attention on SM120) revealed a critical blocker: we cannot confidently map C++ loops to their SASS form. The kernel contained constant-trip-count loops (N_TILES=8, K_TILES=2) but the SASS dump showed only 2 QMMAs with no back-edge BRA. This is inconsistent with both "full unroll" (expected 16 QMMAs) and "preserved loop" (expected at least one back-edge BRA). The gap blocks further audit work.
+This plan was drafted after an initial attempt to audit a production kernel (fused FP4 attention on SM120) revealed a critical blocker: we could not confidently map C++ loops to their SASS form. The kernel contained constant-trip-count loops (N_TILES=8, K_TILES=2) but the SASS dump showed only 2 QMMAs with no back-edge BRA. This is inconsistent with both "full unroll" (expected 16 QMMAs) and "preserved loop" (expected at least one back-edge BRA).
 
 ## Goal
 
@@ -15,14 +15,16 @@ Decode how ptxas transforms C++ loops into SASS on SM120. Answer four concrete q
 
 ## Hypotheses to test
 
-* [HYP-20-1] Constant trip count at compile time always triggers full unroll on small bodies
-* [HYP-20-2] `#pragma unroll 1` forces a real loop with BRA back-edge
-* [HYP-20-3] Dynamic trip count forces a real loop with BRA back-edge
-* [HYP-20-4] Nested constant loops may be partially unrolled (outer kept as loop, inner unrolled) under a heuristic threshold
-* [HYP-20-5] BSSY/BSYNC on Blackwell is for divergence reconvergence only, not for loops
-* [HYP-20-6] No BRA back-edge in a SASS dump means no SASS-level loop, regardless of what the C++ source says
+* [RES] HYP-20-1: constant trip count at compile time triggers full unroll for tested scalar and HMMA loops unless an unroll pragma restricts it.
+* [RES] HYP-20-2: `#pragma unroll 1` forces a real loop with BRA back-edge for the tested N=16 loop.
+* [RES] HYP-20-3: dynamic trip count produces back-edges, but often as a multi-path cascade rather than one compact loop.
+* [RES] HYP-20-4: nested constant loops do not partially unroll in tested 4 x 2 and 8 x 2 scalar/HMMA cases. They fully unroll.
+* [RES] HYP-20-5: BSSY/BSYNC is not used for ordinary loops in tested variants, but the tested `break` loop emits BSSY/BSYNC.
+* [RES] HYP-20-6: no SASS-level loop without a BRA back-edge was observed in tested variants.
 
 ## Planned variants
+
+Executed scope was expanded after review. The final studied set is 20a through 20v and is listed in `README.md` and `conclusion20.md`.
 
 | Variant | Kernel | Tests |
 |---|---|---|
@@ -55,7 +57,7 @@ From the aborted FP4 attention audit:
 
 * The binary (Apr 13 timestamp, potentially stale vs current common.h) had 2 QMMAs in a kernel that should have 16 if fully unrolled.
 * Zero BRA back-edges in the kernel, which is inconsistent with preserved loops.
-* The 71 BSSY/BSYNC pairs observed are presumably for divergence reconvergence, not loops — to confirm.
+* The 71 BSSY/BSYNC pairs observed are presumably for divergence reconvergence, not loops. Chapter 20 confirms ordinary loops do not need BSSY/BSYNC in tested variants; Chapter 21 still needs to test real warp-divergent reconvergence.
 * Possible explanations:
   * The binary was stale and contained a specialized compile with N_TILES=1 or similar
   * ptxas applied an optimization that dedupes MMAs across iterations (unlikely if each MMA has distinct operands, but A/B register re-use was observed)
