@@ -1,45 +1,56 @@
 # 19 Sparse MMA (2:4 structured sparsity)
 
-`mma.sp::ordered_metadata` variants on SM120. Sparse MMA operates on a 2:4 structured-sparse A matrix (2 nonzero elements per group of 4), which doubles effective K and produces 2× throughput compared to dense.
+## Scope
 
-SM120 advertised peak for sparse FP4: 1801 TOPS, reached by `SM120_SPARSE_16x8x128_TN_VS<e2m1, e2m1, f32, ue8m0, 64>`.
+* [OBS] This chapter studies warp-level `mma.sp::ordered_metadata` on SM120 using inline PTX compiled with `nvcc -arch=compute_120a -code=sm_120a`.
+* [OBS] The accepted probes cover non-scaled `kind::f8f6f4`, F16 accumulator, metadata value changes, block-scaled `kind::mxf8f6f4`, block-scaled `kind::mxf4nvf4`, and a sparse QMMA dependency chain.
+* [GAP] Runtime numeric validation and latency timing are blocked by the unavailable NVIDIA driver in the local environment.
 
-## Variants planned
+## Sources
 
-| # | PTX atom | Notes |
+| File | Purpose |
+|---|---|
+| `19_sparse_qmma_probe.cu` | [OBS] Parameterized non-scaled sparse `kind::f8f6f4` probe. |
+| `19_sparse_block_scale_probe.cu` | [OBS] Parameterized sparse block-scaled probe for `kind::mxf8f6f4` and `kind::mxf4nvf4`. |
+| `19_sparse_qmma_chain.cu` | [OBS] Parameterized sparse `kind::f8f6f4` dependency-chain probe. |
+
+## Variants studied
+
+| Variant | PTX form | SASS result |
 |---|---|---|
-| 19a | `mma.sp::ordered_metadata.sync.aligned.kind::f8f6f4.m16n8k64.row.col.f32.e4m3.e4m3.f32` | Sparse FP8 non-scaled |
-| 19b | `mma.sp::ordered_metadata.sync.aligned.kind::f8f6f4.m16n8k64.row.col.f32.e2m1.e2m1.f32` | Sparse FP4 non-scaled (doubled K from dense 32) |
-| 19c | `mma.sp::ordered_metadata.sync.aligned.kind::mxf8f6f4.block_scale.scale_vec::2X.m16n8k128.row.col.f32.e2m1.e2m1.f32.ue8m0` | Sparse FP4 block-scaled peak (1801 TOPS) |
-| 19d | `...kind::mxf8f6f4.block_scale.scale_vec::2X.m16n8k128.row.col.f32.e2m1.e2m1.f32.ue4m3` | Alternate SF |
-| 19e | Dense vs sparse same atom side-by-side | Delta analysis |
+| 19a | `kind::f8f6f4.f32.e4m3.e4m3.f32`, metadata `0xaaaaaaaa`, selector `0` | [OBS] `QMMA.SP.16864.F32.E4M3.E4M3` |
+| 19b | `kind::f8f6f4.f32.e4m3.e5m2.f32`, metadata `0xaaaaaaaa`, selector `0` | [OBS] `QMMA.SP.16864.F32.E4M3.E5M2` |
+| 19c | `kind::f8f6f4.f32.e3m2.e2m3.f32`, metadata `0xaaaaaaaa`, selector `0` | [OBS] `QMMA.SP.16864.F32.E3M2.E2M3` |
+| 19d | `kind::f8f6f4.f32.e2m1.e2m1.f32`, metadata `0xaaaaaaaa`, selector `0` | [OBS] `QMMA.SP.16864.F32.E2M1.E2M1` |
+| 19e | Same as 19a, metadata `0x55555555` | [OBS] Same `QMMA.SP` encoding as 19a, metadata producer changes to `MOV R0, 0x55555555` |
+| 19f | Same as 19a, metadata `0xffffffff` | [OBS] Same `QMMA.SP` encoding as 19a, metadata producer changes to `MOV R0, 0xffffffff` |
+| 19g | Same as 19a, selector `1` | [OBS] Rejected by ptxas: expected selector `0` |
+| 19h | `kind::f8f6f4.f16.e3m2.e2m1.f16`, metadata `0xaaaaaaaa`, selector `0` | [OBS] `QMMA.SP.16864.F16.E3M2.E2M1` |
+| 19i | `kind::mxf8f6f4.block_scale.scale_vec::1X.f32.e3m2.e2m1.f32.ue8m0` | [OBS] `QMMA.SF.SP.16864.F32.E3M2.E2M1.E8` |
+| 19j | `kind::mxf4nvf4.block_scale.scale_vec::2X.f32.e2m1.e2m1.f32.ue8m0` | [OBS] `OMMA.SF.SP.168128.F32.E2M1.E2M1.E8` |
+| 19k | `kind::mxf4nvf4.block_scale.scale_vec::4X.f32.e2m1.e2m1.f32.ue4m3` | [OBS] `OMMA.SF.SP.168128.F32.E2M1.E2M1.UE4M3.4X` |
+| 19l | `kind::mxf4nvf4.block_scale.scale_vec::4X.f32.e2m1.e2m1.f32.ue8m0` | [OBS] `OMMA.SF.SP.168128.F32.E2M1.E2M1.E8.4X` |
+| 19m | 16 x sparse `kind::f8f6f4.f32.e4m3.e4m3.f32` chain | [OBS] 16 x `QMMA.SP.16864.F32.E4M3.E4M3` |
 
-## Key questions
+## Key answers
 
-1. What SASS modifier or opcode distinguishes sparse MMA from dense?
-2. How is sparsity metadata (which of the 4 elements are nonzero) encoded? Separate register, packed into A, or operand to the instruction?
-3. What is the `sparsitySelector` qualifier and how does it appear at SASS?
-4. Does `ordered_metadata` mean the metadata has a specific layout?
-5. Is the K doubling (m16n8k64 sparse = m16n8k32 dense effective) an artifact of counting, or a hardware-level expansion?
-6. Can sparse and dense MMA coexist in the same kernel with consistent scoreboarding?
+* [RES] Sparse non-scaled `kind::f8f6f4` is not a new SASS opcode family in the tested SM120 form. It emits `QMMA.SP` with low byte `0x7a`.
+* [RES] Sparse block-scaled `kind::mxf8f6f4` emits `QMMA.SF.SP` with low byte `0x7a`.
+* [RES] Sparse block-scaled `kind::mxf4nvf4` emits `OMMA.SF.SP` with low byte `0x7f`.
+* [RES] Sparse metadata is an explicit SASS register operand.
+* [OBS] The selector appears as the final immediate operand in SASS.
+* [OBS] Selector value `1` is rejected by ptxas for the tested `kind::f8f6f4` sparse form.
+* [INF] Sparse forms double the displayed SASS K field relative to the dense family baseline: dense `QMMA.16832` becomes sparse `QMMA.SP.16864`, and dense `OMMA.SF.16864` becomes sparse `OMMA.SF.SP.168128`.
 
-## Context from FINDINGS.md
+## Commands
 
-**From chapters 13-16**: dense MMA opcode family established. Sparse is an extension but may have its own opcode prefix or modifier.
+```bash
+nvcc -arch=compute_120a -code=sm_120a -DA_DTYPE=e4m3 -DB_DTYPE=e4m3 -DACC_F32=1 -DMETA_VALUE=0xaaaaaaaau -DSELECTOR_VALUE=0 -o build/19a_sparse_e4m3_e4m3 19_sparse_qmma_probe.cu
+cuobjdump --dump-sass build/19a_sparse_e4m3_e4m3 > 19a_sparse_e4m3_e4m3.sass
+```
 
-**From chapter 16**: FP4 peak at k=64 with block scaling = 933 TFLOPS. Sparse FP4 peak at k=128 with block scaling = 1866 TOPS (measured by Lei Mao). The 2× ratio must correspond to the structural doubling.
+## Open gaps
 
-**Cost rule extension**: sparse metadata load adds overhead. Quantify in this chapter.
-
-## Status
-
-* [ ] 19a sparse FP8
-* [ ] 19b sparse FP4 non-scaled
-* [ ] 19c sparse FP4 block-scaled peak (ue8m0)
-* [ ] 19d sparse FP4 block-scaled (ue4m3)
-* [ ] 19e dense vs sparse side-by-side
-* [ ] conclusion19.md
-
-## Dependencies
-
-Chapter 16 provides the dense FP4 peak baseline. Sparse is an extension, conceptually and at SASS.
+* [GAP] Runtime validity of individual metadata bit patterns is not known from SASS alone.
+* [GAP] Sparse chain latency and sparse throughput are not measured in this environment.
+* [GAP] Exact bit placement of the `.SP` mode in SASS encoding is only partially bounded by opcode/control-code comparisons.
