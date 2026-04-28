@@ -839,7 +839,7 @@ Ptxas applies these techniques in order before resorting to spill:
 
 ---
 
-The content below is a skeleton [WIP] for tensor core findings, to be filled chapter by chapter. Integrates with the existing structure of FINDINGS.md: new opcodes extend the Pipelines table in the Cross chapter summary, new canonical patterns add to the existing Canonical patterns list, new architectural invariants add to the existing Architectural invariants list.
+[OBS] Chapters 13 through 19 establish the observed SM120 tensor-core opcode families, load/staging instructions, sparse metadata operand placement, and chain scheduling behavior. [GAP] Remaining gaps are tracked explicitly under the relevant chapter and in the cross-chapter audit-gap section.
 
 ---
 
@@ -1253,7 +1253,7 @@ Chapter decoding the block-scaled MMA family on SM120: kind::mxf8f6f4 (k=32) and
 * [OBS] `OMMA.SF.16864.F32.<A>.<B>.<scale_dtype>[.<scale_vec>]` is a new opcode family on SM120, low byte `0x7f`. Distinct from QMMA (`0x7a`) and HMMA (`0x3c`).
 * [OBS] OMMA shape is always m16n8k64 (k=64). Used exclusively for `kind::mxf4nvf4` PTX.
 * [HYP] The "O" in OMMA presumably stands for "Octal" (FP4 packs 8 values per uint32) or references the doubled k dimension.
-### Complete SM120 MMA opcode landscape
+### Complete dense SM120 MMA opcode landscape
 After chapters 13, 14, 16:
 | Family | Low byte | Shape | PTX kind | Scaled? |
 |---|---|---|---|---|
@@ -1318,7 +1318,7 @@ The low byte of the opcode is a reliable family identifier.
 * [RES] OMMA chain latency ~29 cycles/MMA, faster than HMMA/QMMA (~35)
 * [RES] OMMA gives 4.8× FLOPs/cycle vs HMMA at the latency floor
 ### Open gaps
-* [GAP-16-1] Orthogonal vs direct-map encoding of control code byte 2 cannot be disambiguated without a fourth test variant (mxf4nvf4 4X with ue8m0, not a CUTLASS atom).
+* [GAP-16-1] Orthogonal vs direct-map encoding of dense OMMA control code byte 2 cannot be fully disambiguated without a dense mxf4nvf4 4X ue8m0 variant. **Chapter 19 partially constrains this gap**: sparse `mxf4nvf4` 4X ue8m0 compiles as `OMMA.SF.SP.168128.F32.E2M1.E2M1.E8.4X` with control code `0x004ff60000013e14`, proving the sparse path admits 4X with ue8m0.
 * [GAP-16-2] OMMA pipelined throughput not measured. Would require a multi-warp microbench with independent MMAs.
 * [GAP-16-3] Scale factor values other than 1.0 not tested. Real block-scaled kernels use diverse scale values per block.
 * [GAP-16-4] Direct comparison with production FP4 GEMM SASS (CUTLASS, Marlin FP4) not done. Would validate the decoded opcodes in production context.
@@ -1335,7 +1335,7 @@ The low byte of the opcode is a reliable family identifier.
 * `.UE4M3` suffix: scale dtype ue4m3 (full notation for fine-grained mode)
 * `.4X` suffix on OMMA: scale_vec::4X (finer granularity than default 2X)
 ### Implications for production kernel audit
-With chapters 13 (HMMA), 14 (QMMA), 16 (block-scaled), 17 (LDSM), 18 (cp.async pipeline), the repo now documents **every MMA opcode emitted by mma.sync on SM120**, including the block-scaled FP4 peak path. Combined with the load/store/sync opcodes from earlier chapters, every production GEMM, FP4 quantized inference, or block-scaled attention kernel on SM120 is now decodable end-to-end.
+With chapters 13 (HMMA), 14 (QMMA), 16 (dense block-scaled), 17 (LDSM), 18 (cp.async pipeline), and 19 (sparse MMA), the repo documents the observed warp-level tensor-core opcode families emitted by `mma.sync` and `mma.sp` on SM120. [INF] This is sufficient to identify dense and sparse tensor-core instructions in production GEMM, FP4 quantized inference, and block-scaled attention dumps, but it is not yet sufficient for a complete end-to-end audit because control flow, reconvergence, matrix-store behavior, and FP4/FP6 fragment layout still have open gaps.
 ### Diagnostic workflow for block-scaled MMA in production
 When auditing a block-scaled SASS dump:
 1. Identify the MMA family via low byte: 0x3c = HMMA, 0x7a = QMMA, 0x7f = OMMA.
@@ -1674,92 +1674,93 @@ When auditing a production SASS dump:
 
 # Additions to the Cross chapter summary section
 
-## Pipelines observed so far (row to add once TC opcodes are observed)
+## Tensor-core cross-chapter summary
 
-Once chapter 13 reveals the first MMA opcode, add a new row to the Pipelines table:
+### Pipelines observed so far
 
-| TC | HMMA, (later QMMA if distinct), (later others) |
+| Pipeline / role | SASS families observed | Evidence |
+|---|---|---|
+| Tensor core MMA | [OBS] `HMMA`, `QMMA`, `OMMA`, `QMMA.SP`, `QMMA.SF.SP`, `OMMA.SF.SP` | chapters 13, 14, 16, 19 |
+| Matrix load | [OBS] `LDSM.16.M[T]88[.N]` | chapter 17 |
+| Async global-to-shared copy | [OBS] `LDGSTS`, `LDGDEPBAR`, `DEPBAR.LE SB0, N` | chapter 18 |
 
-[WIP] Exact pipeline name to be confirmed. Candidate: `TC` (tensor core), following the convention of `FMA`, `ALU`, `LSU`, etc.
+### Architectural invariants
 
-## Architectural invariants (to add as observed)
+* [OBS] Dense HMMA, dense QMMA, dense OMMA, and tested sparse QMMA/OMMA forms are warp-level instructions on SM120. The SASS contains one instruction executed by the warp, with fragment operands distributed across the 32 participating lanes.
+* [OBS] No `wgmma.mma_async` or `tcgen05.mma` appears in the SM120 dumps studied through chapter 19.
+* [OBS] Tensor-core family selection is visible in the mnemonic and low opcode byte: `HMMA` low byte `0x3c`, `QMMA` low byte `0x7a`, and `OMMA` low byte `0x7f`.
+* [INF] Sparse tensor-core forms are modifiers on the dense QMMA/OMMA families for the tested SM120 forms, because `QMMA.SP` and `QMMA.SF.SP` keep low byte `0x7a`, while `OMMA.SF.SP` keeps low byte `0x7f`.
+* [GAP] Non-TN MMA layouts are not systematically tested across all SM120 MMA families.
+* [GAP] Matrix-store behavior remains untested. `stmatrix` / STSM is now a required pre-Phase-3 chapter.
 
-Once verified empirically:
+### Canonical tensor-core tile pattern
 
-* [HYP→?] **MMA on SM120 is warp-level only.** No wgmma (Hopper-only), no tcgen05.mma (Blackwell datacenter only). Every MMA instruction is scoped to a single warp of 32 threads. [To confirm by attempting to compile a tcgen05 PTX and observing the rejection or fallback.]
-* [HYP→?] **SM120 MMA only supports TN layout.** A row-major, B column-major. Other layouts reject at PTX level. [To confirm.]
-* [HYP→?] **Block-scaled MMA requires `-arch=sm_120a`.** Plain `sm_120` rejects kind::mxf8f6f4. [To confirm.]
-* [HYP→?] **Peak performance depends on shape, not only dtype.** FP4 at k=32 reaches 238 TFLOPS, FP4 at k=64 block-scaled reaches 933 TFLOPS (Lei Mao benchmark). SASS-level explanation pending.
-
-## Canonical patterns (to add as observed)
-
-### [WIP] Canonical MMA tile pattern
-
-Once chapter 18 is complete:
+```text
+LDGSTS tile[N+1]                    [OBS] chapter 18, optional for pipelined kernels
+LDGDEPBAR / DEPBAR.LE SB0, N         [OBS] chapter 18
+BAR.SYNC                             [OBS] chapter 18
+LDSM B fragment                      [OBS] chapters 17, 18
+LDSM A fragment                      [OBS] chapters 17, 18
+HMMA / QMMA / OMMA / sparse variant   [OBS] chapters 13, 14, 16, 19
+accumulator chain via D == C          [OBS] chapters 13, 14, 16, 19
+STG epilogue                          [OBS] chapters 13, 14, 16, 19
 ```
-ldmatrix.x4 A fragments
-ldmatrix.x4 B fragments
-<scoreboard wait>
-MMA
-<optional: accumulator chain with next MMA>
-...
-stmatrix D fragments OR STG to global
-```
 
-### [WIP] Canonical ldmatrix + MMA pipelining
+* [OBS] Chapters 17 and 18 show ptxas emits LDSM B before LDSM A in tested tensor-core tiles.
+* [OBS] Chapters 13, 14, 16, and 19 show chained MMA forms colocate D and C registers after the first MMA in the chain.
+* [GAP] The store-back side of matrix fragments through `stmatrix` is not covered by the chapters completed so far.
 
-Once chapter 17 and 18 reveal the pattern.
+### Arithmetic operator compilation rules
 
-## Arithmetic operator compilation rules (rows to add)
-
-| Source | ptxas strategy |
+| Source / PTX family | SASS strategy |
 |---|---|
-| `mma.sync.aligned.m16n8k16.f16.f16.f16.f16` inline PTX | [WIP from chapter 13] |
-| `mma.sync.aligned.kind::f8f6f4.m16n8k32...` inline PTX | [WIP from chapter 14] |
-| `mma.sync.aligned.kind::mxf8f6f4.block_scale...` inline PTX | [WIP from chapter 16] |
-| `ldmatrix.sync.aligned.x4.shared.b16` inline PTX | [WIP from chapter 17] |
+| [OBS] `mma.sync.aligned.m16n8k16...` | [OBS] `HMMA.16816.<acc>[.<input>]` |
+| [OBS] `mma.sync.aligned.kind::f8f6f4.m16n8k32...` | [OBS] `QMMA.16832.<acc>.<A>.<B>` |
+| [OBS] `mma.sync.aligned.kind::mxf8f6f4.block_scale...` | [OBS] `QMMA.SF.16832.<acc>.<A>.<B>.<scale>` |
+| [OBS] `mma.sync.aligned.kind::mxf4nvf4.block_scale...` | [OBS] `OMMA.SF.16864.<acc>.<A>.<B>.<scale>[.<scale_vec>]` |
+| [OBS] `mma.sp::ordered_metadata...kind::f8f6f4...` | [OBS] `QMMA.SP.16864.<acc>.<A>.<B>` |
+| [OBS] `mma.sp::ordered_metadata...kind::mxf8f6f4.block_scale...` | [OBS] `QMMA.SF.SP.16864.<acc>.<A>.<B>.<scale>` |
+| [OBS] `mma.sp::ordered_metadata...kind::mxf4nvf4.block_scale...` | [OBS] `OMMA.SF.SP.168128.<acc>.<A>.<B>.<scale>[.<scale_vec>]` |
+| [OBS] `ldmatrix.sync.aligned.x{1,2,4}.shared.b16` | [OBS] `LDSM.16.M88[.N]` |
 
-## Cost rules (rows to add)
+### Cost rules established so far
 
-* **MMA m16n8k16 f16 cost**: [WIP from chapter 13 microbenchmark].
-* **MMA m16n8k32 FP8 cost**: [WIP from chapter 14].
-* **MMA m16n8k64 FP4 block-scaled cost (peak path)**: [WIP from chapter 16].
-* **ldmatrix.x4 cost**: [WIP from chapter 17].
-* **Scale factor load overhead for block-scaled MMA**: [WIP from chapter 16].
-* **Sparsity metadata load overhead**: [WIP from chapter 19].
+* [RES] HMMA.16816.F32 serial dependency-chain latency is approximately 35 cycles per MMA on SM120.
+* [RES] QMMA.16832.F32 serial dependency-chain latency is approximately 35 cycles per MMA on SM120.
+* [RES] OMMA.SF.16864.F32 serial dependency-chain latency is approximately 29 cycles per MMA on SM120.
+* [RES] LDSM serial latency is approximately 33 cycles on SM120.
+* [GAP] Sparse QMMA/OMMA serial latency is not measured because runtime timing is blocked by the unavailable driver.
+* [GAP] Scale factor value effects are not measured beyond unity-scale probes.
+* [GAP] Sparse metadata load overhead at runtime is not measured.
 
-## Compiler artifacts (entries to add)
+### Compiler artifacts and diagnostic signals
 
-* **First HMMA observation**: the opcode byte pattern [WIP from chapter 13]. Signal that tensor core is active.
-* **kind::f8f6f4 SASS form**: [WIP from chapter 14]. Signal that FP8 MMA is in use.
-* **Block scaling signal**: [WIP from chapter 16]. Additional operand for scale factor register.
-* **LDSM (ldmatrix)**: [WIP from chapter 17]. Signal of MMA setup.
+* [OBS] `HMMA` in a dump identifies FP16/BF16 tensor-core MMA on SM120.
+* [OBS] `QMMA.16832` identifies dense `kind::f8f6f4` non-scaled MMA on SM120.
+* [OBS] `.SF` on QMMA or OMMA identifies block scaling on SM120.
+* [OBS] `.SP` on QMMA or OMMA identifies sparse `mma.sp::ordered_metadata` on SM120.
+* [OBS] `LDSM` identifies matrix-fragment loads from shared memory.
+* [OBS] `LDGSTS` plus `LDGDEPBAR` plus `DEPBAR.LE SB0, N` identifies cp.async staging.
 
-## Reading opcode modifiers (entries to add)
+## Opcode operand semantics
 
-Once observed:
-* **`.kind::<X>`** on MMA: [WIP]. Likely a SASS modifier or a separate opcode per kind.
-* **`.block_scale`** on MMA: [WIP].
-* **`.scale_vec::<NX>`** on MMA: [WIP].
-* **`.trans`** on LDSM: [WIP].
+* [OBS] HMMA/QMMA/OMMA dense SASS operand order is D base, A base, B base, C base.
+* [OBS] Dense block-scaled QMMA/OMMA adds scale operands after C: SFA, SFB, and `URZ`.
+* [OBS] Sparse non-scaled QMMA adds metadata register and selector immediate after C.
+* [OBS] Sparse block-scaled QMMA/OMMA operand order after C is metadata register, scale register, `URZ`, selector immediate.
+* [OBS] LDSM operand order is destination register base and shared-memory address operand.
+* [GAP] STSM operand semantics are not observed.
 
-## Opcode operand semantics (entries to add)
+## Global diagnostic workflow for tensor-core dumps
 
-Once observed, entries in the same style as existing opcodes:
-* **HMMA `dst_regs, src_A_regs, src_B_regs, src_C_regs`**: [WIP].
-* **QMMA / or new opcode `dst, A, B, C`**: [WIP].
-* **LDSM `dst_regs, [shared_addr]`**: [WIP].
-* **STSM `[shared_addr], src_regs`**: [WIP].
-
-## Global diagnostic workflow (entries to add)
-
-New steps for tensor core dumps:
-* **Grep for MMA opcodes** (HMMA, QMMA, or new) to locate the compute core.
-* **Grep for LDSM / STSM** to find the shared memory staging.
-* **Identify the shape and dtype** from opcode modifiers or operand patterns.
-* **Check accumulator chaining**: same register pair reused across multiple MMAs?
-* **Check ldmatrix + MMA pipelining**: scoreboard wait between load and MMA placed correctly?
-* **Check block scaling**: extra SF register operand present?
+* [OBS] Grep for `HMMA`, `QMMA`, `OMMA`, `QMMA.SP`, `QMMA.SF.SP`, and `OMMA.SF.SP` to locate tensor-core compute.
+* [OBS] Grep for `LDSM` to locate shared-memory fragment loading.
+* [OBS] Grep for `LDGSTS`, `LDGDEPBAR`, and `DEPBAR.LE` to locate cp.async staging.
+* [OBS] Read shape and dtype directly from the MMA mnemonic for observed SM120 tensor-core families.
+* [OBS] Check accumulator chaining by looking for D and C register colocation across consecutive MMAs.
+* [OBS] Check block scaling by looking for `.SF` and post-C scale operands.
+* [OBS] Check sparse MMA by looking for `.SP`, metadata register operand, and selector immediate.
+* [GAP] Grep for `STSM` / `stmatrix` remains provisional because matrix-store SASS has not been studied yet.
 
 ## Cross chapter summary
 
@@ -1778,6 +1779,7 @@ New steps for tensor core dumps:
 | FP64 | DADD (first observed in kernel 08f), DMUL (observed in kernel 11g) |
 | VOTE | VOTE.ANY, VOTE.ALL |
 | REDUX | REDUX, REDUX.OR, REDUX.XOR, REDUX.SUM, REDUX.MIN, REDUX.MAX |
+| TC | HMMA, QMMA, OMMA, QMMA.SP, QMMA.SF.SP, OMMA.SF.SP, LDSM, LDGSTS, LDGDEPBAR, DEPBAR.LE |
 
 ### Architectural invariants
 
@@ -2516,7 +2518,7 @@ During an attempt to audit a production fused FP4 attention kernel on SM120, sev
 
 ### [GAP-audit-6] No documented audit methodology
 
-* [OBS] Chapters 01-18 document opcodes and patterns in isolation.
+* [OBS] Chapters 01-19 document opcodes and patterns in isolation.
 * [GAP] There is no written methodology for auditing a production kernel end-to-end: how to identify kernel sections, how to map C++ source to SASS regions, how to interpret instruction densities, how to validate hypotheses about kernel behavior.
 
 ### [GAP-audit-7] No confidence qualification framework
@@ -2526,10 +2528,13 @@ During an attempt to audit a production fused FP4 attention kernel on SM120, sev
 
 ### Plan to close the gaps
 
-* Chapter 20 (planned, not executed): control flow — loops, unroll behavior, back-edge detection, BSSY/BSYNC semantics. See `tensor_cores/20_control_flow/plan.md`. Closes GAP-audit-1, GAP-audit-2, partially GAP-audit-4.
-* Chapter 21 (candidate): divergence and predication. Would close GAP-audit-3.
-* Chapter 22 (candidate): audit methodology — a walkthrough of auditing a production kernel using all prior chapters. Would close GAP-audit-6 and GAP-audit-7.
+* Chapter 20 (required before Phase 3, not executed): control flow, loops, unroll behavior, back-edge detection, and predication vs branching. Closes GAP-audit-1, GAP-audit-2, and partially GAP-audit-4.
+* Chapter 21 (required before Phase 3, not executed): divergence and reconvergence, including BSSY/BSYNC, warp-divergent branches, and predicated arithmetic. Closes GAP-audit-3.
+* Chapter 22 (required before Phase 3, not executed): stmatrix / matrix store. Closes the matrix-store gap left by chapters 17 and 18.
+* Chapter 23 (strongly recommended before Phase 3, not executed): FP4 / FP6 fragment layout. Closes GAP-14d-1 and the FP6/FP4 packing gaps from chapter 15 if runtime validation becomes available.
+* Chapter 24 (strongly recommended before Phase 3, not executed): production mini-GEMM audit using LDGSTS + LDSM + QMMA/OMMA + STG end-to-end. Reduces GAP-audit-6 and GAP-audit-7 before pattern formalization.
 
-### Decision: chapter 20 deferred
+### Decision: Phase 3 gated
 
-The control flow chapter (20) is drafted but not executed. Current priority is to test the current toolkit on a different production kernel to verify whether these gaps are universal or specific to the FP4 attention case.
+* [RES] Phase 3 must not start until required chapters 20, 21, and 22 are complete.
+* [INF] Chapters 23 and 24 are strongly recommended before Phase 3 because fragment layout and an end-to-end production-like audit reduce the risk of formalizing incomplete patterns.
