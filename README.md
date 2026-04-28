@@ -36,16 +36,41 @@ Concretely, the project works toward an audit tool that takes a cubin and produc
 - [x] Kernel 11 — Slowpath arithmetic (MUFU.RCP/LG2/EX2/RSQ, inline division, log2f, expf, sinf, sqrtf, Payne-Hanek)
 - [x] Kernel 12 — Register spill and local memory (STL, LDL, LDL.LU, STL.128, stack frame, R2UR)
 
-### Phase 2 — Tensor core kernels on SM120 (controlled variation)
+### Phase 2 - Teaching and tensor core kernels on SM120 (controlled variation)
 
 - [x] Kernel 13 — HMMA baseline (FP16, BF16, m16n8k16): opcode family, register allocation, accumulator chaining, serial latency model
 - [x] Kernel 14 — QMMA baseline FP8/FP6/FP4 (kind::f8f6f4, m16n8k32): new opcode family, dtype encoding decoded across 5 input dtypes, MMA-family wide invariants, serial latency model
-- [ ] Kernel 15 — MMA narrow (FP6, FP4 standalone variants, mixed-precision combinations)
+- [x] Kernel 15 - MMA narrow (FP6, FP4 standalone variants, mixed-precision combinations)
 - [x] Kernel 16 — FP4 peak (kind::mxf8f6f4 block-scaled, m16n8k64, scale factor encoding)
 - [x] Kernel 17 — ldmatrix and stmatrix (LDSM, .trans modifier, latency)
 - [x] Kernel 18 — Pipelined MMA tile (ldmatrix + MMA scoreboard interleaving, accumulator chains)
-- [ ] Kernel 19 — Sparse MMA (sparsity metadata encoding)
-- [ ] Kernel 20 — Control flow (back-edge BRA detection, BSSY/BSYNC divergence patterns, predication vs branching)
+- [x] Kernel 19 - Sparse MMA (sparsity metadata encoding)
+- [ ] Kernel 20 - Control flow (back-edge BRA detection, loop detection, predication vs branching)
+- [ ] Kernel 21 - Divergence and reconvergence (BSSY/BSYNC, warp-divergent branches, predicated arithmetic)
+- [ ] Kernel 22 - stmatrix / matrix store (STSM if present, fallback STS sequence if not present)
+- [ ] Kernel 23 - FP4 / FP6 fragment layout (E2M1, E3M2, E2M3 packing and runtime validation)
+- [ ] Kernel 24 - Production mini-GEMM audit (LDGSTS + LDSM + QMMA/OMMA + STG end-to-end)
+
+### Phase 3 gate
+
+Phase 3 does not start until the remaining SM120 coverage needed for production audits is complete.
+
+Required before Phase 3:
+
+- [ ] Kernel 20 - Control flow
+- [ ] Kernel 21 - Divergence and reconvergence
+- [ ] Kernel 22 - stmatrix / matrix store
+
+Strongly recommended before Phase 3:
+
+- [ ] Kernel 23 - FP4 / FP6 fragment layout
+- [ ] Kernel 24 - Production mini-GEMM audit
+
+Deferred and non-blocking for Phase 3:
+
+- [ ] Sparse QMMA / OMMA latency once hardware runtime is available
+- [ ] Exact `.SP` bit placement in opcode/control fields
+- [ ] Full control-code bit decoder
 
 ### Phase 3 — Pattern library
 
@@ -126,10 +151,12 @@ Work starts on SM120 (direct hardware access). Other architectures via public du
 - `tensor_cores/` — Phase 2 tensor core kernels organized by chapter
   - `13_hmma_fp16/` — HMMA opcode family baseline
   - `14_qmma_fp8/` — QMMA opcode family baseline
+  - `15_mma_narrow/` - FP6, FP4, and mixed narrow QMMA variants
   - `16_fp4_peak/` — OMMA, block-scaled FP4
   - `17_ldmatrix/` — LDSM variants
   - `18_pipelined_tile/` — cp.async pipeline
-  - `15_mma_narrow/`, `19_sparse_mma/`, `20_control_flow/` — planned
+  - `19_sparse_mma/` - sparse MMA metadata and sparse QMMA/OMMA forms
+  - `20_control_flow/`, `21_divergence_reconvergence/`, `22_stmatrix/`, `23_fragment_layout/`, `24_production_mini_gemm/` - planned before Phase 3
 - `patterns/` (coming) — formalized pattern library
 - `production/` (coming) — production kernel audits
 - `FINDINGS.md` — running log of observations, hypotheses, and resolutions, organized by chapter, with cross-chapter summary of pipelines, invariants, canonical patterns, and open gaps

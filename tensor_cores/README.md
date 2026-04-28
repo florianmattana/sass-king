@@ -34,7 +34,33 @@ Not in scope on SM120 (architecturally unavailable):
 | [16_fp4_peak/](./16_fp4_peak/) | FP4 peak block-scaled (kind::mxf8f6f4 and kind::mxf4nvf4, 900+ TFLOPS path) | New SASS opcode family `OMMA` (low byte 0x7f). `.SF` modifier for block scaling. `.UE4M3.4X` suffix identifies the peak path. OMMA cycles/MMA ~29 (vs ~35 HMMA/QMMA) |
 | [17_ldmatrix/](./17_ldmatrix/) | `ldmatrix` (6 variants: x1/x2/x4 × trans/no-trans) | New opcode `LDSM.16.M[T]88[.N]`, production pattern captured |
 | [18_pipelined_tile/](./18_pipelined_tile/) | Full pipelined GEMM tile with cp.async, LDSM, HMMA | Three new opcodes: LDGSTS, LDGDEPBAR, DEPBAR.LE. Full production pipeline decoded |
-| [19_sparse_mma/](./19_sparse_mma/) | 2:4 structured sparsity MMA (1801 TOPS peak) | Planned |
+| [19_sparse_mma/](./19_sparse_mma/) | 2:4 structured sparsity MMA | Sparse forms are `QMMA.SP`, `QMMA.SF.SP`, and `OMMA.SF.SP`; metadata is an explicit register operand |
+| 20_control_flow/ | Control flow | Planned: back-edge BRA, loop detection, predication vs branching |
+| 21_divergence_reconvergence/ | Divergence and reconvergence | Planned: BSSY/BSYNC, warp-divergent branches, predicated arithmetic |
+| 22_stmatrix/ | stmatrix / matrix store | Planned: STSM if present, fallback STS sequence if not present |
+| 23_fragment_layout/ | FP4 / FP6 fragment layout | Planned: E2M1, E3M2, E2M3 packing and runtime validation |
+| 24_production_mini_gemm/ | Production mini-GEMM audit | Planned: LDGSTS + LDSM + QMMA/OMMA + STG end-to-end |
+
+## Phase 3 gate
+
+Phase 3 does not start until the SM120 audit prerequisites below are complete.
+
+Required before Phase 3:
+
+- [ ] Chapter 20 - Control flow
+- [ ] Chapter 21 - Divergence and reconvergence
+- [ ] Chapter 22 - stmatrix / matrix store
+
+Strongly recommended before Phase 3:
+
+- [ ] Chapter 23 - FP4 / FP6 fragment layout
+- [ ] Chapter 24 - Production mini-GEMM audit
+
+Deferred and non-blocking for Phase 3:
+
+- [ ] Sparse QMMA / OMMA latency once hardware runtime is available
+- [ ] Exact `.SP` bit placement in opcode/control fields
+- [ ] Full control-code bit decoder
 
 ## Methodology
 
@@ -58,17 +84,25 @@ The per-chapter `conclusion{N}.md` files here document the narrative of the chap
 | 16 | **Done** | 16a-16d (4) | QMMA.SF, OMMA.SF.16864, OMMA.SF.16864.UE4M3.4X |
 | 17 | **Done** | 17a-17f (6) | LDSM.16.M\[T\]88\[.N\] |
 | 18 | **Done** | 18a-18c (3) | LDGSTS.E.LTC128B.128, LDGDEPBAR, DEPBAR.LE SB0, N |
-| 19 | Planned | - | - |
+| 19 | **Done** | 19a-19m (13) | QMMA.SP.16864, QMMA.SF.SP.16864, OMMA.SF.SP.168128 |
+| 20 | Planned | - | BRA, predication, loop structure |
+| 21 | Planned | - | BSSY/BSYNC, reconvergence |
+| 22 | Planned | - | STSM or STS fallback |
+| 23 | Planned | - | FP4 / FP6 fragment packing |
+| 24 | Planned | - | Production mini-GEMM pattern |
 
-Chapters 13, 14, 16, 17, 18 together form a complete toolkit for auditing production GEMM, attention, and block-scaled FP4 kernels on SM120.
+Chapters 13, 14, 16, 17, 18, and 19 decode the core tensor-core instruction families. Chapters 20 through 24 remain required or strongly recommended before the pattern library because production audits also need control flow, reconvergence, matrix-store behavior, fragment layout, and an end-to-end mini-GEMM validation.
 
-## SM120 MMA opcode landscape (after chapter 16)
+## SM120 MMA opcode landscape (after chapter 19)
 
 | Family | Low byte | Shape | PTX kind | Scaled? |
 |---|---|---|---|---|
 | HMMA | 0x3c | m16n8k16 | mma.sync standard | No |
 | QMMA | 0x7a | m16n8k32 | kind::f8f6f4, kind::mxf8f6f4 | Optional (.SF modifier) |
 | OMMA | 0x7f | m16n8k64 | kind::mxf4nvf4 | Always (implicit .SF) |
+| QMMA.SP | 0x7a | m16n8k64 | mma.sp kind::f8f6f4 | Sparse |
+| QMMA.SF.SP | 0x7a | m16n8k64 | mma.sp kind::mxf8f6f4 | Sparse and scaled |
+| OMMA.SF.SP | 0x7f | m16n8k128 | mma.sp kind::mxf4nvf4 | Sparse and scaled |
 
 ## Hardware and toolchain
 

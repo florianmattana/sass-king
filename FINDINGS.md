@@ -1619,12 +1619,56 @@ When auditing a production SASS dump:
 
 ## Kernel 19 Sparse MMA
 
-[WIP]
+* [OBS] Chapter 19 establishes warp-level sparse MMA encoding on SM120. Variants cover non-scaled `kind::f8f6f4`, metadata immediate changes, selector rejection, F16 accumulator, block-scaled `kind::mxf8f6f4`, block-scaled `kind::mxf4nvf4`, and a 16-instruction sparse dependency chain.
 
-### Open questions
+### Observations
 
-* [HYP] Sparse MMA SASS opcode. Candidate: modifier on MMA or distinct opcode.
-* [HYP] Sparsity metadata encoding in SASS operands.
+* [OBS] 19a compiles `mma.sp::ordered_metadata.sync.aligned.m16n8k64.row.col.kind::f8f6f4.f32.e4m3.e4m3.f32` to `QMMA.SP.16864.F32.E4M3.E4M3 R4, R4, R16, R20, R0, 0x0` with opcode bytes `0x000000100404727a` and control code `0x004ff60000013414`.
+* [OBS] 19a has 48 total instructions. Top mnemonics are 14 `NOP`, 12 `LDG.E.CONSTANT`, 4 `STG.E`, 4 `LDC.64`, and 4 `IMAD.WIDE.U32`.
+* [OBS] 19a through 19f each have 48 total instructions.
+* [OBS] Sparse non-scaled `kind::f8f6f4` uses the existing QMMA opcode low byte `0x7a`, matching dense QMMA from chapters 14 and 15, with a new `.SP` mnemonic modifier.
+* [OBS] Sparse non-scaled shape is `.16864`, while dense non-scaled QMMA shape is `.16832` in chapters 14 and 15.
+* [INF] Sparse non-scaled `kind::f8f6f4` doubles the SASS K field from 32 to 64 while staying in the QMMA family, because 19a emits `QMMA.SP.16864` and chapters 14 and 15 emit dense `QMMA.16832` for the same dtype family.
+* [OBS] 19a uses 6 SASS operands: D base, A base, B base, C base, metadata register, and selector immediate.
+* [OBS] 19a materializes metadata as `MOV R0, 0xaaaaaaaa`, and the sparse MMA consumes `R0` as the fifth operand.
+* [OBS] 19e changes metadata to `0x55555555`; the SASS changes the metadata materialization to `MOV R0, 0x55555555`, while the `QMMA.SP` opcode bytes and control code remain identical to 19a.
+* [OBS] 19f changes metadata to `0xffffffff`; the SASS changes the metadata materialization to `MOV R0, 0xffffffff`, while the `QMMA.SP` opcode bytes and control code remain identical to 19a.
+* [INF] Metadata value is a runtime register operand, not an opcode or control-code field, because changing the metadata constant changes only the producer `MOV`, not the `QMMA.SP` instruction encoding.
+* [OBS] 19b compiles E4M3 x E5M2 to `QMMA.SP.16864.F32.E4M3.E5M2` with the same opcode bytes as 19a and control code `0x004ff6000001b414`.
+* [OBS] 19c compiles E3M2 x E2M3 to `QMMA.SP.16864.F32.E3M2.E2M3` with the same opcode bytes as 19a and control code `0x004ff60000257414`.
+* [OBS] 19d compiles E2M1 x E2M1 to `QMMA.SP.16864.F32.E2M1.E2M1` with the same opcode bytes as 19a and control code `0x004ff6000029f414`.
+* [INF] Sparse non-scaled dtype selection remains in the control code, not opcode bytes, because 19a through 19d keep opcode bytes `0x000000100404727a` while dtype suffixes and control codes change.
+* [OBS] 19h compiles F16 accumulator E3M2 x E2M1 to `QMMA.SP.16864.F16.E3M2.E2M1 R12, R12, R16, R20, R0, 0x0` with opcode bytes `0x000000100c0c727a` and control code `0x004ff6000025d414`.
+* [OBS] 19h has 40 total instructions, 8 fewer than the F32 accumulator sparse non-scaled probes, because F16 accumulator D and C fragments use 2 registers rather than 4.
+* [OBS] Selector value `1` for the tested sparse `kind::f8f6f4` PTX form is rejected by ptxas with `Argument 5 of instruction 'mma': unexpected value '1', expected to be 0`.
+* [OBS] 19i compiles sparse block-scaled `kind::mxf8f6f4` to `QMMA.SF.SP.16864.F32.E3M2.E2M1.E8 R4, R4, R8, R20, R18, R0, URZ, 0x0` with opcode bytes `0x700012080404747a` and control code `0x004ff6000025fe14`.
+* [OBS] 19i materializes scale value `0x7f` in `R0`, metadata `0xaaaaaaaa` in `R18`, and emits `R18` as the fifth MMA operand.
+* [OBS] 19i through 19l each have 48 total instructions.
+* [OBS] Sparse block-scaled SASS operand order is D base, A base, B base, C base, metadata register, scale register, `URZ`, selector immediate.
+* [OBS] 19j compiles sparse block-scaled `kind::mxf4nvf4` 2X ue8m0 to `OMMA.SF.SP.168128.F32.E2M1.E2M1.E8 R4, R4, R8, R20, R18, R0, URZ, 0x0` with opcode bytes `0x700012080404747f` and control code `0x004ff60000093e14`.
+* [OBS] 19k compiles sparse block-scaled `kind::mxf4nvf4` 4X ue4m3 to `OMMA.SF.SP.168128.F32.E2M1.E2M1.UE4M3.4X` with the same opcode bytes as 19j and control code `0x004ff60000053e14`.
+* [OBS] 19l compiles sparse block-scaled `kind::mxf4nvf4` 4X ue8m0 to `OMMA.SF.SP.168128.F32.E2M1.E2M1.E8.4X` with the same opcode bytes as 19j and control code `0x004ff60000013e14`.
+* [INF] 19l partially constrains chapter 16's scale-mode gap: `scale_vec::4X` can combine with ue8m0 on the sparse `mxf4nvf4` path, but the dense `mxf4nvf4` 4X ue8m0 path remains untested.
+* [INF] Sparse block-scaled `kind::mxf4nvf4` keeps chapter 16's OMMA low byte `0x7f`; sparse adds `.SP` and doubles the displayed K from `.16864` dense to `.168128` sparse.
+* [INF] For sparse block-scaled `kind::mxf4nvf4`, scale mode remains encoded in control code, because 19j through 19l keep opcode bytes `0x700012080404747f` while scale suffixes and control codes change.
+* [OBS] 19m emits 16 `QMMA.SP.16864.F32.E4M3.E4M3` instructions in a dependency chain.
+* [OBS] 19m has 88 total instructions.
+* [OBS] 19m first sparse chain instruction uses C=`RZ`, `.reuse` on B, and control code `0x084ff600000134ff`.
+* [OBS] 19m middle sparse chain instructions use C=`R12`, `.reuse` on B, and control code `0x080ff6000001340c`.
+* [OBS] 19m last sparse chain instruction uses C=`R12`, no `.reuse` on B, and control code `0x000fe2000001340c`.
+* [INF] Sparse QMMA chain scheduling follows the chapter 14 QMMA chain pattern: B gets `.reuse` until the last instruction, D and C are colocated after the first instruction, and control code high bits track the dependency chain.
+
+### Resolved hypotheses
+
+* [RES] Sparse MMA SASS opcode question resolved for tested warp-level SM120 forms: non-scaled sparse `kind::f8f6f4` emits `QMMA.SP`, sparse `kind::mxf8f6f4` emits `QMMA.SF.SP`, and sparse `kind::mxf4nvf4` emits `OMMA.SF.SP`.
+* [RES] Sparse metadata encoding question resolved at SASS operand level: metadata is an explicit register operand before the selector immediate.
+
+### Open gaps
+
+* [GAP] Runtime validity of metadata patterns `0xaaaaaaaa`, `0x55555555`, and `0xffffffff` is not measured because the local NVIDIA driver is unavailable.
+* [GAP] Sparse QMMA and sparse OMMA latency are not measured because runtime timing is blocked by the unavailable NVIDIA driver.
+* [GAP] Exact bit-level meaning of the sparse `.SP` modifier inside QMMA and OMMA opcode/control fields is not fully decoded.
+* [GAP] Selector semantics for all warp-level sparse families are not fully mapped. Selector `1` is rejected for the tested `kind::f8f6f4` form, but other shapes and legacy `mma.sp` forms were not exhaustively compiled.
 
 ---
 
