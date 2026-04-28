@@ -1672,6 +1672,89 @@ When auditing a production SASS dump:
 
 ---
 
+## Kernel 20 Control flow
+
+* [OBS] Chapter 20 establishes SM120 SASS loop-lowering behavior for 22 controlled variants covering constant loops, dynamic loops, unroll pragmas, nested scalar loops, nested HMMA loops, conditional bodies, `break`, `continue`, volatile stores, template instantiation, unique per-iteration stores, and identical repeated bodies.
+
+### Variants and outcomes
+
+* [OBS] 20a constant loop N=4 emits 40 instructions, no back-edge, 4 FFMA, and 4 FADD.
+* [OBS] 20b constant loop N=16 emits 64 instructions, no back-edge, 16 FFMA, and 16 FADD.
+* [OBS] 20c dynamic loop emits 192 instructions, 11 BRA-family instructions including the trap branch, 3 back-edges, 33 FFMA, and 33 FADD.
+* [OBS] 20d constant loop N=16 with `#pragma unroll 1` emits 40 instructions and one backward `BRA.U UP0, 0xe0` at offset `0x0130`.
+* [OBS] 20e nested scalar loop 4 x 2 emits 48 instructions, no back-edge, 8 FFMA, and 8 FADD.
+* [OBS] 20f nested scalar loop 8 x 2 emits 64 instructions, no back-edge, 16 FFMA, and 16 FADD.
+* [OBS] 20g nested HMMA loop 4 x 2 emits 56 instructions, no back-edge, and 8 `HMMA.16816.F32`.
+* [OBS] 20h nested HMMA loop 8 x 2 emits 80 instructions, no back-edge, and 16 `HMMA.16816.F32`.
+* [OBS] 20i dynamic loop with short `if` emits 80 instructions, 2 back-edges, predicated FADD, and no BSSY/BSYNC.
+* [OBS] 20j dynamic loop with larger `if` emits 136 instructions, 1 back-edge, predicated BRA, predicated arithmetic, and no BSSY/BSYNC.
+* [OBS] 20k dynamic loop with `break` emits 40 instructions, 1 back-edge, `BSSY.RECONVERGENT B0, 0x1c0` at offset `0x0120`, and `BSYNC.RECONVERGENT B0` at offset `0x01b0`.
+* [OBS] 20l dynamic loop with `continue` emits 168 instructions, 2 back-edges, many predicated arithmetic instructions, and no BSSY/BSYNC.
+* [OBS] 20m constant loop N=16 with explicit full unroll emits the same instruction count and arithmetic counts as 20b: 64 instructions, 16 FFMA, 16 FADD, and no back-edge.
+* [OBS] 20n constant loop N=16 with `#pragma unroll 4` emits 48 instructions, 1 back-edge, and a 4-iteration unrolled body.
+* [OBS] 20o dynamic loop with `#pragma unroll 4` emits 64 instructions, 2 back-edges, and a 4-wide loop/tail structure.
+* [OBS] 20p dynamic loop with an accumulator dependency chain emits 96 instructions, 3 back-edges, and 33 FFMA.
+* [OBS] 20q dynamic loop with four independent accumulators emits 208 instructions, 3 back-edges, and 132 FFMA.
+* [OBS] 20r dynamic loop with volatile store emits 96 instructions, 1 back-edge, and `STG.E.STRONG.SYS` for the volatile global stores.
+* [OBS] 20s template nested loop 8 x 2 emits one SASS function with 64 instructions, no back-edge, 16 FFMA, and 16 FADD.
+* [OBS] 20t emits two SASS functions in one dump: `template_nested_kernel<4,2>` and `template_nested_kernel<8,2>`.
+* [OBS] 20u nested 8 x 2 loop with unique per-iteration stores emits 88 instructions, no back-edge, 16 FFMA, 16 FADD, and 16 STG.E.
+* [OBS] 20v nested 8 x 2 identical repeated body emits 48 instructions, no back-edge, and 16 FADD. No multiply-by-16 collapse is observed.
+
+### Loop-lowering rules established
+
+* [RES] Constant scalar loops with compile-time trip counts 4 and 16 fully unroll by default in the tested SM120 kernels.
+* [RES] Nested constant loops with scalar bodies fully unroll by default for tested 4 x 2 and 8 x 2 shapes.
+* [RES] Nested constant loops with HMMA bodies fully unroll by default for tested 4 x 2 and 8 x 2 shapes.
+* [RES] `#pragma unroll 1` preserves a constant-trip loop as a SASS loop with a backward `BRA.U`.
+* [RES] `#pragma unroll 4` preserves a loop with a 4-iteration unrolled body and a backward `BRA.U`.
+* [OBS] Dynamic loops in 20c, 20p, and 20q do not lower to a single compact loop. They lower to multi-path unroll cascades with multiple back-edges.
+* [INF] Dynamic-loop lowering in Chapter 20 matches the runtime-loop cascade pattern from Kernel 04: ptxas creates specialized paths for trip-count ranges and uses back-edges inside those paths.
+* [RES] In the tested variants, a preserved SASS loop always has at least one back-edge branch. No loop without a back-edge was observed.
+
+### Control-flow constructs
+
+* [OBS] Ordinary preserved loops use `BRA.U` when the controlling predicate is uniform.
+* [OBS] Short conditional loop bodies can lower to predicated arithmetic without BSSY/BSYNC.
+* [OBS] Larger conditional loop bodies can lower to predicated BRA plus predicated arithmetic without BSSY/BSYNC.
+* [OBS] `continue` can lower to predicated arithmetic and back-edges without BSSY/BSYNC.
+* [OBS] `break` in 20k emits BSSY/BSYNC around the break-capable loop body.
+* [INF] BSSY/BSYNC is not required for ordinary loops in the tested variants, but can be introduced by non-structured loop exit through `break`.
+
+### Production audit implications
+
+* [RES] The minimal 8 x 2 HMMA reproduction does not reproduce the earlier production-audit 2-MMA observation. 20h emits 16 static HMMAs.
+* [INF] The prior FP4 attention 2-QMMA observation is therefore not explained by normal ptxas lowering of an 8 x 2 nested MMA loop. Remaining explanations are stale binary, different template specialization, source not matching the dump, dead-code elimination around unused MMA results, or a production-specific transformation not reproduced by the minimal kernel.
+* [OBS] Template instantiations appear as separate SASS functions in a single dump, as shown by 20t.
+* [INF] Production audits must count instructions per SASS function, not per source file, because a source file can contribute multiple template-specialized kernel bodies.
+* [OBS] Unique per-iteration stores in 20u survive as 16 STG.E instructions.
+* [OBS] Identical repeated scalar bodies in 20v remain 16 FADD instructions in the tested source. No repeated-body collapse into `x * 16` is observed.
+
+### Resolved hypotheses
+
+* [RES] HYP-20-1 constant trip count at compile time fully unrolls for the tested small and moderate constant loops.
+* [RES] HYP-20-2 `#pragma unroll 1` forces a real loop with a back-edge for the tested N=16 loop.
+* [RES] HYP-20-3 dynamic trip count produces back-edges, but the result is often a multi-path cascade rather than one simple loop.
+* [RES] HYP-20-4 nested constant loops are not partially unrolled in the tested 4 x 2 and 8 x 2 scalar/HMMA cases. They fully unroll.
+* [RES] HYP-20-5 BSSY/BSYNC is not used for ordinary loops in the tested variants. It is used for the tested `break` loop.
+* [RES] HYP-20-6 no SASS-level loop without a back-edge was observed in the tested variants.
+
+### Open gaps
+
+* [GAP] Runtime numeric validation of 20a through 20v is blocked by the unavailable NVIDIA driver.
+* [GAP] Exact ptxas thresholds and heuristics for the dynamic-loop cascade are not fully decoded.
+* [GAP] Original production FP4 attention 2-QMMA case remains unresolved end-to-end because the original source/binary pair was not rebuilt and compared in this chapter.
+* [GAP] Warp-divergent reconvergence patterns remain Chapter 21 scope.
+
+### New diagnostic rules
+
+* [OBS] A back-edge is a `BRA` or `BRA.U` whose target offset is lower than the branch instruction offset.
+* [OBS] A dump with no useful-body back-edge and repeated arithmetic/MMA sites is a fully unrolled loop in the tested variants.
+* [OBS] The terminal self-trap `BRA` after `EXIT` must not be counted as a loop back-edge because its target is the same offset.
+* [OBS] Multiple `Function :` sections in one SASS dump can indicate template specializations or multiple kernels, as shown by 20t.
+
+---
+
 # Additions to the Cross chapter summary section
 
 ## Tensor-core cross-chapter summary
@@ -2488,7 +2571,8 @@ During an attempt to audit a production fused FP4 attention kernel on SM120, sev
 * [OBS] The observed SASS had 2 QMMAs only, with zero BRA back-edges.
 * [OBS] This outcome is inconsistent with both "fully unrolled" and "loop preserved" interpretations.
 * [HYP] Either the binary was stale (compiled from an earlier version of source), or ptxas applied an optimization we do not recognize, or our model of unroll behavior is wrong.
-* [GAP] We cannot currently predict what SASS a given C++ loop will produce. This blocks audit of any kernel with non-trivial control flow.
+* [RES] Chapter 20 resolves the minimal-loop part of this gap for tested scalar and HMMA loops: constant 8 x 2 nested HMMA loops fully unroll and emit 16 static HMMAs.
+* [GAP] The original production 2-QMMA observation remains unresolved until the exact source/binary pair is rebuilt and compared. The remaining explanations are stale binary, different template specialization, dead-code elimination around unused MMA results, or a production-specific transformation not reproduced by Chapter 20.
 
 ### [GAP-audit-2] Loop detection without BRA back-edge is not documented
 
@@ -2496,7 +2580,9 @@ During an attempt to audit a production fused FP4 attention kernel on SM120, sev
 * [OBS] In the FP4 attention SASS, no back-edge was found in a kernel that must have dynamic loops at the C++ level (`seq_tile` depends on runtime `seq_k`).
 * [HYP] Blackwell may use BSSY/BSYNC for loop structures, not just divergence.
 * [HYP] Or the compiler specialized the binary with constant folding of dynamic parameters.
-* [GAP] The complete inventory of SASS loop encodings on SM120 has not been characterized.
+* [RES] Chapter 20 finds no SASS-level loop without a back-edge in the tested variants. Preserved constant loops, dynamic-loop cascades, `break`, `continue`, and unroll-pragmas all expose at least one backward `BRA` or `BRA.U`.
+* [RES] Chapter 20 rejects the tested form of "BSSY/BSYNC as ordinary loop encoding": ordinary loops do not need BSSY/BSYNC. The `break` variant can emit BSSY/BSYNC because it has a non-structured loop exit.
+* [GAP] This remains open only for untested production-specific transformations and warp-divergent reconvergence patterns.
 
 ### [GAP-audit-3] Divergence and predication patterns are undocumented
 
@@ -2508,13 +2594,15 @@ During an attempt to audit a production fused FP4 attention kernel on SM120, sev
 
 * [OBS] When counting QMMAs in a SASS dump, the interpretation depends on scope: is this the code executed by 1 thread, 1 warp, or 1 block?
 * [HYP] The answer is "1 thread executing warp-level instructions," meaning the same instruction is executed simultaneously by all 32 threads in the warp.
-* [GAP] No chapter formalizes this or explains how per-thread vs per-warp vs per-block instruction counts differ.
+* [RES] Chapter 20 partially resolves the audit-counting part: SASS instruction counts are per static function body, and warp-level instructions such as HMMA appear once per static MMA site in that function body. A nested 8 x 2 HMMA source emits 16 HMMA instructions, not 16 x 32 thread-local instruction sites.
+* [GAP] Full thread/warp/block scope teaching remains incomplete for divergent warp-level instructions and is deferred to Chapter 21.
 
 ### [GAP-audit-5] Template specialization effects not covered
 
 * [OBS] The kernel was template `<int HEAD_DIM>` with two instantiations (64, 128) visible in the SASS dump.
 * [OBS] Other constants (N_TILES, K_TILES) are computed from HEAD_DIM but not template parameters.
-* [GAP] Chapter 12 touches on register pressure from templates but does not systematically cover specialization effects.
+* [RES] Chapter 20 partially covers specialization visibility: 20t emits two separate SASS functions for two template instantiations in one dump.
+* [GAP] The effect of production template constants on complete attention/GEMM loop structure remains open until a production-style templated kernel is rebuilt and audited end-to-end.
 
 ### [GAP-audit-6] No documented audit methodology
 
@@ -2528,13 +2616,13 @@ During an attempt to audit a production fused FP4 attention kernel on SM120, sev
 
 ### Plan to close the gaps
 
-* Chapter 20 (required before Phase 3, not executed): control flow, loops, unroll behavior, back-edge detection, and predication vs branching. Closes GAP-audit-1, GAP-audit-2, and partially GAP-audit-4.
-* Chapter 21 (required before Phase 3, not executed): divergence and reconvergence, including BSSY/BSYNC, warp-divergent branches, and predicated arithmetic. Closes GAP-audit-3.
-* Chapter 22 (required before Phase 3, not executed): stmatrix / matrix store. Closes the matrix-store gap left by chapters 17 and 18.
-* Chapter 23 (strongly recommended before Phase 3, not executed): FP4 / FP6 fragment layout. Closes GAP-14d-1 and the FP6/FP4 packing gaps from chapter 15 if runtime validation becomes available.
-* Chapter 24 (strongly recommended before Phase 3, not executed): production mini-GEMM audit using LDGSTS + LDSM + QMMA/OMMA + STG end-to-end. Reduces GAP-audit-6 and GAP-audit-7 before pattern formalization.
+* [RES] Chapter 20 is complete for control flow, loops, unroll behavior, back-edge detection, and local predication vs branching. It closes the minimal-loop portion of GAP-audit-1, resolves tested loop-detection cases in GAP-audit-2, and partially resolves GAP-audit-4 and GAP-audit-5.
+* [GAP] Chapter 21 is still required before Phase 3 for divergence and reconvergence, including BSSY/BSYNC, warp-divergent branches, and predicated arithmetic. It is expected to close GAP-audit-3.
+* [GAP] Chapter 22 is still required before Phase 3 for stmatrix / matrix store. It is expected to close the matrix-store gap left by chapters 17 and 18.
+* [GAP] Chapter 23 is strongly recommended before Phase 3 for FP4 / FP6 fragment layout. It is expected to close GAP-14d-1 and the FP6/FP4 packing gaps from chapter 15 if runtime validation becomes available.
+* [GAP] Chapter 24 is strongly recommended before Phase 3 for production mini-GEMM audit using LDGSTS + LDSM + QMMA/OMMA + STG end-to-end. It is expected to reduce GAP-audit-6 and GAP-audit-7 before pattern formalization.
 
 ### Decision: Phase 3 gated
 
-* [RES] Phase 3 must not start until required chapters 20, 21, and 22 are complete.
+* [RES] Phase 3 must not start until remaining required chapters 21 and 22 are complete.
 * [INF] Chapters 23 and 24 are strongly recommended before Phase 3 because fragment layout and an end-to-end production-like audit reduce the risk of formalizing incomplete patterns.

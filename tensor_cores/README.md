@@ -35,7 +35,7 @@ Not in scope on SM120 (architecturally unavailable):
 | [17_ldmatrix/](./17_ldmatrix/) | `ldmatrix` (6 variants: x1/x2/x4 × trans/no-trans) | New opcode `LDSM.16.M[T]88[.N]`, production pattern captured |
 | [18_pipelined_tile/](./18_pipelined_tile/) | Full pipelined GEMM tile with cp.async, LDSM, HMMA | Three new opcodes: LDGSTS, LDGDEPBAR, DEPBAR.LE. Full production pipeline decoded |
 | [19_sparse_mma/](./19_sparse_mma/) | 2:4 structured sparsity MMA | Sparse forms are `QMMA.SP`, `QMMA.SF.SP`, and `OMMA.SF.SP`; metadata is an explicit register operand |
-| 20_control_flow/ | Control flow | Planned: back-edge BRA, loop detection, predication vs branching |
+| [20_control_flow/](./20_control_flow/) | Control flow | Constant loops fully unroll by default; preserved loops expose back-edge BRA; 8 x 2 HMMA probe emits 16 HMMAs |
 | 21_divergence_reconvergence/ | Divergence and reconvergence | Planned: BSSY/BSYNC, warp-divergent branches, predicated arithmetic |
 | 22_stmatrix/ | stmatrix / matrix store | Planned: STSM if present, fallback STS sequence if not present |
 | 23_fragment_layout/ | FP4 / FP6 fragment layout | Planned: E2M1, E3M2, E2M3 packing and runtime validation |
@@ -47,7 +47,7 @@ Phase 3 does not start until the SM120 audit prerequisites below are complete.
 
 Required before Phase 3:
 
-- [ ] Chapter 20 - Control flow
+- [x] Chapter 20 - Control flow
 - [ ] Chapter 21 - Divergence and reconvergence
 - [ ] Chapter 22 - stmatrix / matrix store
 
@@ -85,13 +85,13 @@ The per-chapter `conclusion{N}.md` files here document the narrative of the chap
 | 17 | **Done** | 17a-17f (6) | LDSM.16.M\[T\]88\[.N\] |
 | 18 | **Done** | 18a-18c (3) | LDGSTS.E.LTC128B.128, LDGDEPBAR, DEPBAR.LE SB0, N |
 | 19 | **Done** | 19a-19m (13) | QMMA.SP.16864, QMMA.SF.SP.16864, OMMA.SF.SP.168128 |
-| 20 | Planned | - | BRA, predication, loop structure |
+| 20 | **Done** | 20a-20v (22) | BRA, BRA.U, predication, BSSY/BSYNC for break |
 | 21 | Planned | - | BSSY/BSYNC, reconvergence |
 | 22 | Planned | - | STSM or STS fallback |
 | 23 | Planned | - | FP4 / FP6 fragment packing |
 | 24 | Planned | - | Production mini-GEMM pattern |
 
-Chapters 13, 14, 16, 17, 18, and 19 decode the core tensor-core instruction families. Chapters 20 through 24 remain required or strongly recommended before the pattern library because production audits also need control flow, reconvergence, matrix-store behavior, fragment layout, and an end-to-end mini-GEMM validation.
+Chapters 13, 14, 16, 17, 18, and 19 decode the core tensor-core instruction families. Chapter 20 closes the first control-flow gate for loop lowering and back-edge detection. Chapters 21 through 24 remain required or strongly recommended before the pattern library because production audits also need reconvergence, matrix-store behavior, fragment layout, and an end-to-end mini-GEMM validation.
 
 ## SM120 MMA opcode landscape (after chapter 19)
 

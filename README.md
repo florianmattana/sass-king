@@ -45,7 +45,7 @@ Concretely, the project works toward an audit tool that takes a cubin and produc
 - [x] Kernel 17 — ldmatrix and stmatrix (LDSM, .trans modifier, latency)
 - [x] Kernel 18 — Pipelined MMA tile (ldmatrix + MMA scoreboard interleaving, accumulator chains)
 - [x] Kernel 19 - Sparse MMA (sparsity metadata encoding)
-- [ ] Kernel 20 - Control flow (back-edge BRA detection, loop detection, predication vs branching)
+- [x] Kernel 20 - Control flow (back-edge BRA detection, loop detection, predication vs branching)
 - [ ] Kernel 21 - Divergence and reconvergence (BSSY/BSYNC, warp-divergent branches, predicated arithmetic)
 - [ ] Kernel 22 - stmatrix / matrix store (STSM if present, fallback STS sequence if not present)
 - [ ] Kernel 23 - FP4 / FP6 fragment layout (E2M1, E3M2, E2M3 packing and runtime validation)
@@ -57,7 +57,7 @@ Phase 3 does not start until the remaining SM120 coverage needed for production 
 
 Required before Phase 3:
 
-- [ ] Kernel 20 - Control flow
+- [x] Kernel 20 - Control flow
 - [ ] Kernel 21 - Divergence and reconvergence
 - [ ] Kernel 22 - stmatrix / matrix store
 
@@ -156,7 +156,8 @@ Work starts on SM120 (direct hardware access). Other architectures via public du
   - `17_ldmatrix/` — LDSM variants
   - `18_pipelined_tile/` — cp.async pipeline
   - `19_sparse_mma/` - sparse MMA metadata and sparse QMMA/OMMA forms
-  - `20_control_flow/`, `21_divergence_reconvergence/`, `22_stmatrix/`, `23_fragment_layout/`, `24_production_mini_gemm/` - planned before Phase 3
+  - `20_control_flow/` - control-flow lowering, unroll pragmas, back-edge detection
+  - `21_divergence_reconvergence/`, `22_stmatrix/`, `23_fragment_layout/`, `24_production_mini_gemm/` - planned before Phase 3
 - `patterns/` (coming) — formalized pattern library
 - `production/` (coming) — production kernel audits
 - `FINDINGS.md` — running log of observations, hypotheses, and resolutions, organized by chapter, with cross-chapter summary of pipelines, invariants, canonical patterns, and open gaps
