@@ -36,7 +36,7 @@ Not in scope on SM120 (architecturally unavailable):
 | [18_pipelined_tile/](./18_pipelined_tile/) | Full pipelined GEMM tile with cp.async, LDSM, HMMA | Three new opcodes: LDGSTS, LDGDEPBAR, DEPBAR.LE. Full production pipeline decoded |
 | [19_sparse_mma/](./19_sparse_mma/) | 2:4 structured sparsity MMA | Sparse forms are `QMMA.SP`, `QMMA.SF.SP`, and `OMMA.SF.SP`; metadata is an explicit register operand |
 | [20_control_flow/](./20_control_flow/) | Control flow | Constant loops fully unroll by default; preserved loops expose back-edge BRA; 8 x 2 HMMA probe emits 16 HMMAs |
-| 21_divergence_reconvergence/ | Divergence and reconvergence | Planned: BSSY/BSYNC, warp-divergent branches, predicated arithmetic |
+| [21_divergence_reconvergence/](./21_divergence_reconvergence/) | Divergence and reconvergence | Lane divergence alone does not always force BSSY/BSYNC; ptxas also uses predication, FSEL/UFSEL, predicated EXIT, VOTE, WARPSYNC.ALL, and local CALL patterns |
 | 22_stmatrix/ | stmatrix / matrix store | Planned: STSM if present, fallback STS sequence if not present |
 | 23_fragment_layout/ | FP4 / FP6 fragment layout | Planned: E2M1, E3M2, E2M3 packing and runtime validation |
 | 24_production_mini_gemm/ | Production mini-GEMM audit | Planned: LDGSTS + LDSM + QMMA/OMMA + STG end-to-end |
@@ -48,7 +48,7 @@ Phase 3 does not start until the SM120 audit prerequisites below are complete.
 Required before Phase 3:
 
 - [x] Chapter 20 - Control flow
-- [ ] Chapter 21 - Divergence and reconvergence
+- [x] Chapter 21 - Divergence and reconvergence
 - [ ] Chapter 22 - stmatrix / matrix store
 
 Strongly recommended before Phase 3:
@@ -86,12 +86,12 @@ The per-chapter `conclusion{N}.md` files here document the narrative of the chap
 | 18 | **Done** | 18a-18c (3) | LDGSTS.E.LTC128B.128, LDGDEPBAR, DEPBAR.LE SB0, N |
 | 19 | **Done** | 19a-19m (13) | QMMA.SP.16864, QMMA.SF.SP.16864, OMMA.SF.SP.168128 |
 | 20 | **Done** | 20a-20v (22) | BRA, BRA.U, predication, BSSY/BSYNC for break |
-| 21 | Planned | - | BSSY/BSYNC, reconvergence |
+| 21 | **Done** | 21a-21t (20) | BSSY/BSYNC, VOTE.ANY, SHFL.IDX, WARPSYNC.ALL, predicated EXIT |
 | 22 | Planned | - | STSM or STS fallback |
 | 23 | Planned | - | FP4 / FP6 fragment packing |
 | 24 | Planned | - | Production mini-GEMM pattern |
 
-Chapters 13, 14, 16, 17, 18, and 19 decode the core tensor-core instruction families. Chapter 20 closes the first control-flow gate for loop lowering and back-edge detection. Chapters 21 through 24 remain required or strongly recommended before the pattern library because production audits also need reconvergence, matrix-store behavior, fragment layout, and an end-to-end mini-GEMM validation.
+Chapters 13, 14, 16, 17, 18, and 19 decode the core tensor-core instruction families. Chapter 20 closes the first control-flow gate for loop lowering and back-edge detection. Chapter 21 closes the first divergence/reconvergence gate for the tested lane-divergent patterns. Chapters 22 through 24 remain required or strongly recommended before the pattern library because production audits also need matrix-store behavior, fragment layout, and an end-to-end mini-GEMM validation.
 
 ## SM120 MMA opcode landscape (after chapter 19)
 

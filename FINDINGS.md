@@ -430,7 +430,7 @@ Chapter focused on warp-synchronous communication primitives. Twelve variants te
 * [HYP] The MOV of partial mask in 09k: dead code or scheduler hint?
 * [HYP] Pipeline assignment for SHFL (documentation says LSU but not confirmed by gpuasm).
 * [HYP] Behavior of SHFL under genuine divergence (half-warp taking different paths). Not tested.
-* [HYP] Does `WARPSYNC` opcode exist at all on SM120, or is it fully replaced by NOP padding for all mask variants?
+* [RES] `WARPSYNC` opcode exists on SM120. Chapter 21 variant 21n observes `@P0 WARPSYNC.ALL` before a predicated HMMA. The earlier Kernel 09 result remains narrower: `__syncwarp()` itself did not lower to WARPSYNC in 09e/09k.
 
 ### New instructions observed in this chapter
 
@@ -1335,7 +1335,7 @@ The low byte of the opcode is a reliable family identifier.
 * `.UE4M3` suffix: scale dtype ue4m3 (full notation for fine-grained mode)
 * `.4X` suffix on OMMA: scale_vec::4X (finer granularity than default 2X)
 ### Implications for production kernel audit
-With chapters 13 (HMMA), 14 (QMMA), 16 (dense block-scaled), 17 (LDSM), 18 (cp.async pipeline), and 19 (sparse MMA), the repo documents the observed warp-level tensor-core opcode families emitted by `mma.sync` and `mma.sp` on SM120. [INF] This is sufficient to identify dense and sparse tensor-core instructions in production GEMM, FP4 quantized inference, and block-scaled attention dumps, but it is not yet sufficient for a complete end-to-end audit because control flow, reconvergence, matrix-store behavior, and FP4/FP6 fragment layout still have open gaps.
+With chapters 13 (HMMA), 14 (QMMA), 16 (dense block-scaled), 17 (LDSM), 18 (cp.async pipeline), and 19 (sparse MMA), the repo documents the observed warp-level tensor-core opcode families emitted by `mma.sync` and `mma.sp` on SM120. [INF] This is sufficient to identify dense and sparse tensor-core instructions in production GEMM, FP4 quantized inference, and block-scaled attention dumps. [INF] After chapters 20 and 21, the repo also covers tested loop lowering and first-pass divergence/reconvergence patterns, but it is still not sufficient for a complete end-to-end audit because matrix-store behavior, FP4/FP6 fragment layout, runtime validation, and production mini-GEMM integration still have open gaps.
 ### Diagnostic workflow for block-scaled MMA in production
 When auditing a block-scaled SASS dump:
 1. Identify the MMA family via low byte: 0x3c = HMMA, 0x7a = QMMA, 0x7f = OMMA.
@@ -1744,7 +1744,7 @@ When auditing a production SASS dump:
 * [GAP] Runtime numeric validation of 20a through 20v is blocked by the unavailable NVIDIA driver.
 * [GAP] Exact ptxas thresholds and heuristics for the dynamic-loop cascade are not fully decoded.
 * [GAP] Original production FP4 attention 2-QMMA case remains unresolved end-to-end because the original source/binary pair was not rebuilt and compared in this chapter.
-* [GAP] Warp-divergent reconvergence patterns remain Chapter 21 scope.
+* [RES] First-pass warp-divergent reconvergence patterns are covered by Chapter 21. Remaining gaps are threshold heuristics, `WARPSYNC.ALL` semantics, non-full masks after genuine divergence, and deeper BSSY/BSYNC stack behavior.
 
 ### New diagnostic rules
 
@@ -1752,6 +1752,74 @@ When auditing a production SASS dump:
 * [OBS] A dump with no useful-body back-edge and repeated arithmetic/MMA sites is a fully unrolled loop in the tested variants.
 * [OBS] The terminal self-trap `BRA` after `EXIT` must not be counted as a loop back-edge because its target is the same offset.
 * [OBS] Multiple `Function :` sections in one SASS dump can indicate template specializations or multiple kernels, as shown by 20t.
+
+---
+
+## Kernel 21 Divergence and reconvergence
+
+* [OBS] Chapter 21 establishes SM120 lowering behavior for 20 controlled variants covering lane-dependent short if, uniform branch, divergent if, if/else, nested divergence, break, continue, early return, barrier after divergence, ballot, select-vs-branch, body-size contrast, divergent memory, guarded HMMA, lane-dependent trip count, bounds-check epilogue, masked stores, divergent local call, cold trap path, and vote-converged branch.
+
+### Variants and outcomes
+
+* [OBS] 21a simple lane-dependent short `if` emits 32 instructions, a predicated `FADD`, and no BSSY/BSYNC.
+* [OBS] 21b uniform branch emits 32 instructions, `UFSEL`, and no BSSY/BSYNC.
+* [OBS] 21c lane-divergent `if` emits 48 instructions, `BSSY.RECONVERGENT B0, 0x1e0`, a predicated forward `BRA`, and `BSYNC.RECONVERGENT B0`.
+* [OBS] 21d lane-divergent `if/else` emits 32 instructions, predicated arithmetic for both paths, and no BSSY/BSYNC.
+* [OBS] 21e nested divergence emits 40 instructions, one BSSY/BSYNC pair, and forward branches inside the reconvergence region.
+* [OBS] 21f lane-dependent `break` emits 40 instructions, one BSSY/BSYNC pair, and one useful back-edge.
+* [OBS] 21g lane-dependent `continue` emits 40 instructions, one useful `BRA.U` back-edge, and no BSSY/BSYNC.
+* [OBS] 21h lane-dependent early return emits 32 instructions, an additional predicated `EXIT`, and no BSSY/BSYNC.
+* [OBS] 21i divergent arithmetic followed by `__syncthreads()` emits 40 instructions, `FSEL`, `STS`, `BAR.SYNC.DEFER_BLOCKING`, `LDS`, and no BSSY/BSYNC.
+* [OBS] 21j `__ballot_sync` around a lane-dependent predicate emits 32 instructions, `VOTE.ANY R5, PT, P0`, and no BSSY/BSYNC.
+* [OBS] 21k select-vs-branch-vs-mask emits 40 instructions, `FSEL` instructions, and no BSSY/BSYNC.
+* [OBS] 21l short body followed by long divergent body emits 48 instructions and one BSSY/BSYNC pair around the long divergent body.
+* [OBS] 21m divergent memory paths emits 48 instructions, a predicated forward branch, separate path exits, and no BSSY/BSYNC.
+* [OBS] 21n guarded HMMA emits 64 instructions, many predicated loads, `@P0 WARPSYNC.ALL`, `@P0 HMMA.16816.F32`, predicated FADD reductions, and no BSSY/BSYNC.
+* [OBS] 21o lane-dependent trip count emits 40 instructions, one BSSY/BSYNC pair, and one useful back-edge.
+* [OBS] 21p bounds-check epilogue emits 32 instructions, an additional predicated `EXIT`, and no BSSY/BSYNC.
+* [OBS] 21q masked store tail emits 40 instructions, predicated `LDC.64`, predicated `IMAD.WIDE`, predicated `STG.E`, an additional predicated `EXIT`, and no BSSY/BSYNC.
+* [OBS] 21r divergent noinline call emits 48 instructions, `BSSY.RECONVERGENT B0, 0x170`, `CALL.REL.NOINC 0x1b0`, `BSYNC.RECONVERGENT B0`, a local callee loop with `BRA.U`, and `RET.REL.NODEC R2 0x0`.
+* [OBS] 21s cold trap/error path emits 32 instructions, a predicated forward branch, `BPT.TRAP 0x1`, and no BSSY/BSYNC.
+* [OBS] 21t vote-converged branch emits 32 instructions, `VOTE.ANY P0, P0`, predicated branch, `SHFL.IDX`, and no BSSY/BSYNC.
+
+### Divergence and reconvergence rules established
+
+* [OBS] Across the 20 dumps, BSSY/BSYNC appears in exactly six variants: 21c, 21e, 21f, 21l, 21o, and 21r.
+* [OBS] Lane-dependent control appears without BSSY/BSYNC in 21a, 21d, 21h, 21i, 21j, 21k, 21m, 21n, 21p, 21q, 21s, and 21t.
+* [RES] Lane divergence alone does not force visible BSSY/BSYNC in every tested SM120 SASS form.
+* [OBS] ptxas uses predicated arithmetic in 21a and 21d to avoid explicit reconvergence scopes.
+* [OBS] ptxas uses `FSEL` in 21i and 21k, and `UFSEL` in 21b, to represent selected values without explicit reconvergence scopes.
+* [OBS] ptxas uses predicated `EXIT` for lane-dependent early return and epilogue/tail checks in 21h, 21p, and 21q.
+* [OBS] ptxas uses predicated store setup in 21q for masked writeback.
+* [OBS] ptxas uses BSSY/BSYNC for the tested branch-kept divergent arithmetic regions 21c, 21e, and 21l.
+* [OBS] ptxas uses BSSY/BSYNC for lane-dependent `break` in 21f and lane-dependent trip-count loop in 21o.
+* [OBS] ptxas uses BSSY/BSYNC around the divergent local call in 21r.
+* [INF] In the tested variants, BSSY/BSYNC is associated with divergent regions that ptxas keeps as explicit control regions or local calls, not with every lane-derived predicate.
+
+### Warp-level and tensor-core implications
+
+* [OBS] 21j confirms the register-output ballot form `VOTE.ANY Rdst, PT, Psrc` already seen in Kernel 09.
+* [OBS] 21t uses predicate-output `VOTE.ANY P0, P0` before a branch guarding `SHFL.IDX`, and no BSSY/BSYNC appears.
+* [OBS] 21n introduces `WARPSYNC.ALL` in the project corpus: `@P0 WARPSYNC.ALL` appears before `@P0 HMMA.16816.F32`.
+* [OBS] 21n shows a lane-predicated HMMA can be emitted directly as `@P0 HMMA.16816.F32` in the tested source.
+* [GAP] `WARPSYNC.ALL` semantics and encoding are not decoded.
+* [GAP] Runtime behavior of predicated HMMA under partial-lane participation is not validated.
+
+### Resolved hypotheses
+
+* [RES] HYP-21-1 lane divergence always forces BSSY/BSYNC. Rejected by 21a, 21d, 21h, 21i, 21j, 21k, 21m, 21n, 21p, 21q, 21s, and 21t.
+* [RES] HYP-21-2 short divergent bodies can be predicated without BSSY/BSYNC. Confirmed by 21a and 21d.
+* [RES] HYP-21-3 lane-dependent `break` uses BSSY/BSYNC in the tested loop. Confirmed by 21f.
+* [RES] HYP-21-4 lane-dependent `continue` necessarily uses BSSY/BSYNC. Rejected by 21g.
+* [RES] HYP-21-5 guarded HMMA must be surrounded by BSSY/BSYNC. Rejected by 21n; the observed form is predicated setup, `@P0 WARPSYNC.ALL`, and `@P0 HMMA`.
+
+### Open gaps
+
+* [GAP] Runtime numeric validation of 21a through 21t is blocked by the unavailable NVIDIA driver.
+* [GAP] Exact ptxas threshold for predication/select versus explicit BSSY branch region remains unresolved.
+* [GAP] `WARPSYNC.ALL` control-code bits, predicate behavior, and interaction with HMMA/LDSM/SHFL remain unresolved.
+* [GAP] Non-full warp masks after genuine divergence remain under-tested.
+* [GAP] Exact BSSY/BSYNC stack semantics and barrier register allocation beyond B0 remain unresolved.
 
 ---
 
@@ -2275,7 +2343,7 @@ Quantified overhead per source-level construct, useful for budgeting kernel cost
 * **CALL.REL.NOINC to a local address** (hex offset within same kernel) indicates an inline-but-out-of-hot-path subroutine. The body is placed after the main EXIT. Used for rare slowpaths (sqrtf NaN handling, u64 division high-bits).
 * **BRA to a forward address within the main body** indicates an inline slowpath that doesn't warrant a subroutine (sinf Payne-Hanek, expf non-fast-path). Control returns naturally via fall-through.
 * **Kernel size significantly larger than expected** often means cascade unrolling (runtime trip count) OR full inlining of math library functions (log2f, sinf) OR register spill (STL/LDL multiply kernel size by up to 10×).
-* **BSSY / BSYNC.RECONVERGENT** wrapping a short section means ptxas detected divergence before a warp-synchronous operation OR a divergent slowpath.
+* **BSSY / BSYNC.RECONVERGENT** wrapping a short section means ptxas kept an explicit reconvergence region. [OBS] Observed causes include divergence before a warp-synchronous operation (Kernel 09), local slowpath/call regions (Kernel 11 and 21r), `break` or lane-dependent loop exits (Kernel 20 and 21), and branch-kept divergent arithmetic bodies (Kernel 21c/21e/21l).
 * **Consecutive NOPs between arithmetic instructions** mean the pipeline cannot keep up (FP64 on consumer parts, or ILP shortage).
 * **Long chain of FFMA with monotonic `.reuse` pattern** indicates inline polynomial evaluation via Horner's method. Look at the immediate constants to identify which function (log2, sin, cos, exp).
 * **UI2F.U32.RP followed by MUFU.RCP** is the signature of inline integer division/modulo via Granlund-Montgomery.
@@ -2332,7 +2400,7 @@ SM120-specific or non-obvious suffixes worth knowing:
 
 * **`.ENL2`** (appears on LDG/STG at 256 bits): enlarged encoding using two register base fields instead of one. Needed because 8 consecutive registers cannot fit a single 5-bit register field in the opcode. Observed only at 256-bit width.
 * **`.DEFER_BLOCKING`** (appears on BAR.SYNC): a variant of block-level barrier that allows the warp to defer blocking until necessary. Default form of `__syncthreads()` on SM120.
-* **`.RECONVERGENT`** (appears on BSSY and BSYNC): Independent Thread Scheduling reconvergence scope. Wraps warp-synchronous instructions that follow divergent code.
+* **`.RECONVERGENT`** (appears on BSSY and BSYNC): Independent Thread Scheduling reconvergence scope. [OBS] It can wrap warp-synchronous instructions that follow divergent code, divergent local calls, `break`/lane-dependent loop exits, and branch-kept divergent arithmetic regions in the tested dumps.
 * **`.GEU`** (appears on FSETP): greater equal unordered, FP semantics where NaN comparisons return true.
 * **`.NEU`, `.GTU`, `.LTU`, `.EQU`, `.LEU`** (appear on FSETP): unordered variants of the comparison predicates. NaN comparisons return true for the unordered variants.
 * **`.TRUNC.NTZ`** (appears on F2I): truncation with non-toward-zero rounding for negative zero edge case.
@@ -2557,7 +2625,7 @@ When opening any SASS dump for performance work:
     * Long FFMA chain with `.reuse` on multiplicand → polynomial evaluation (check coefficients)
     * LDG.E.CONSTANT in a counter loop → table-based algorithm (Payne-Hanek or similar)
     * IADD with magic `0x3f3504f3` or similar FP32 bit pattern → mathematical constant subtraction
-    * BSSY/BSYNC with short body → divergence before warp-synchronous op OR slowpath branch
+    * BSSY/BSYNC with short body → branch-kept divergent region, divergence before warp-synchronous op, OR slowpath/local-call branch
 13. **Check ptxas warnings** in the compile output. `adjusting per thread register count of N to lower bound of 24` confirms SM120 register floor was hit.
 14. **Correlate with NCU**. SASS identifies the "who", NCU quantifies the "how much". For spilled kernels, check `stall_lg_throttle` and local memory metrics in NCU.
 
@@ -2578,24 +2646,27 @@ During an attempt to audit a production fused FP4 attention kernel on SM120, sev
 
 * [OBS] All chapters so far assumed loops always emit a BRA back-edge (target < source) at the bottom of the loop body.
 * [OBS] In the FP4 attention SASS, no back-edge was found in a kernel that must have dynamic loops at the C++ level (`seq_tile` depends on runtime `seq_k`).
-* [HYP] Blackwell may use BSSY/BSYNC for loop structures, not just divergence.
+* [RES] The tested form of "Blackwell uses BSSY/BSYNC for ordinary loop structures" is rejected by Chapter 20. [OBS] Chapter 21 shows BSSY/BSYNC for lane-dependent trip-count and break loops, so the refined rule is: ordinary loops do not require BSSY/BSYNC in tested variants, while non-uniform loop exits/trip counts can introduce it.
 * [HYP] Or the compiler specialized the binary with constant folding of dynamic parameters.
 * [RES] Chapter 20 finds no SASS-level loop without a back-edge in the tested variants. Preserved constant loops, dynamic-loop cascades, `break`, `continue`, and unroll-pragmas all expose at least one backward `BRA` or `BRA.U`.
 * [RES] Chapter 20 rejects the tested form of "BSSY/BSYNC as ordinary loop encoding": ordinary loops do not need BSSY/BSYNC. The `break` variant can emit BSSY/BSYNC because it has a non-structured loop exit.
-* [GAP] This remains open only for untested production-specific transformations and warp-divergent reconvergence patterns.
+* [GAP] This remains open only for untested production-specific transformations beyond the Chapter 21 divergence matrix.
 
-### [GAP-audit-3] Divergence and predication patterns are undocumented
+### [RES-audit-3] Divergence and predication patterns now have first-pass coverage
 
 * [OBS] 269 forward BRAs observed in the FP4 attention kernel, organized in groups of 4 pointing to the same target, with stride 0x30.
 * [HYP] These correspond to unrolled `if/else if/else if/...` chains from FP4 encoding (8 levels), processed in parallel.
-* [GAP] No chapter covers predication vs branching, divergence signatures, or reconvergence point identification (BSSY/BSYNC pairing).
+* [RES] Chapter 21 covers first-pass predication vs branching, divergence signatures, and reconvergence point identification across 20 controlled variants.
+* [OBS] Chapter 21 shows lane divergence alone does not force visible BSSY/BSYNC in every tested SM120 SASS form.
+* [OBS] Chapter 21 shows ptxas can use predicated arithmetic, FSEL/UFSEL, predicated EXIT, predicated stores, forward branches, BSSY/BSYNC, VOTE, SHFL, WARPSYNC.ALL, and local CALL depending on source shape.
+* [GAP] Production FP4 attention branch groups still require source/binary-specific audit; Chapter 21 provides the grammar but does not classify that stale production dump end-to-end.
 
 ### [GAP-audit-4] Thread vs warp vs block scope is not explicit in any chapter
 
 * [OBS] When counting QMMAs in a SASS dump, the interpretation depends on scope: is this the code executed by 1 thread, 1 warp, or 1 block?
 * [HYP] The answer is "1 thread executing warp-level instructions," meaning the same instruction is executed simultaneously by all 32 threads in the warp.
 * [RES] Chapter 20 partially resolves the audit-counting part: SASS instruction counts are per static function body, and warp-level instructions such as HMMA appear once per static MMA site in that function body. A nested 8 x 2 HMMA source emits 16 HMMA instructions, not 16 x 32 thread-local instruction sites.
-* [GAP] Full thread/warp/block scope teaching remains incomplete for divergent warp-level instructions and is deferred to Chapter 21.
+* [RES] Chapter 21 adds first-pass coverage for divergent warp-level instructions and guarded HMMA. [GAP] Full scope teaching remains incomplete for `WARPSYNC.ALL`, non-full masks, and runtime behavior of predicated HMMA.
 
 ### [GAP-audit-5] Template specialization effects not covered
 
@@ -2617,12 +2688,12 @@ During an attempt to audit a production fused FP4 attention kernel on SM120, sev
 ### Plan to close the gaps
 
 * [RES] Chapter 20 is complete for control flow, loops, unroll behavior, back-edge detection, and local predication vs branching. It closes the minimal-loop portion of GAP-audit-1, resolves tested loop-detection cases in GAP-audit-2, and partially resolves GAP-audit-4 and GAP-audit-5.
-* [GAP] Chapter 21 is still required before Phase 3 for divergence and reconvergence, including BSSY/BSYNC, warp-divergent branches, and predicated arithmetic. It is expected to close GAP-audit-3.
+* [RES] Chapter 21 is complete for first-pass divergence and reconvergence coverage, including BSSY/BSYNC, warp-divergent branches, predicated arithmetic, predicated exits, VOTE, SHFL, local CALL, and guarded HMMA/WARPSYNC.ALL.
 * [GAP] Chapter 22 is still required before Phase 3 for stmatrix / matrix store. It is expected to close the matrix-store gap left by chapters 17 and 18.
 * [GAP] Chapter 23 is strongly recommended before Phase 3 for FP4 / FP6 fragment layout. It is expected to close GAP-14d-1 and the FP6/FP4 packing gaps from chapter 15 if runtime validation becomes available.
 * [GAP] Chapter 24 is strongly recommended before Phase 3 for production mini-GEMM audit using LDGSTS + LDSM + QMMA/OMMA + STG end-to-end. It is expected to reduce GAP-audit-6 and GAP-audit-7 before pattern formalization.
 
 ### Decision: Phase 3 gated
 
-* [RES] Phase 3 must not start until remaining required chapters 21 and 22 are complete.
+* [RES] Phase 3 must not start until remaining required Chapter 22 is complete.
 * [INF] Chapters 23 and 24 are strongly recommended before Phase 3 because fragment layout and an end-to-end production-like audit reduce the risk of formalizing incomplete patterns.
