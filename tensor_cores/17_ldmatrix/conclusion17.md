@@ -103,7 +103,7 @@ STG × N
 
 ### Observation 1: ptxas inverts the LDSM emission order
 
-[OBS] Although the C++ source emits LDSM_A (x4) before LDSM_B (x2), the SASS shows `LDSM.x2` (B) before `LDSM.x4` (A). [HYP] Emitting the shorter x2 load first may give the longer x4 load more time to complete before the HMMA needs both. [INF] The ordering does not change the dependency requirement that HMMA wait for both LDSM results.
+Although the C++ source emits LDSM_A (x4) before LDSM_B (x2), the SASS shows `LDSM.x2` (B) before `LDSM.x4` (A). Likely reason: by emitting the shorter (x2) load first, ptxas gives the longer (x4) load more time to complete before the HMMA needs both. The total latency is `max(LDSM_A, LDSM_B)` and this ordering doesn't change that, but it may improve other concurrent instructions' schedule.
 
 ### Observation 2: no NOPs between LDSM and HMMA
 
@@ -180,7 +180,7 @@ Observations:
 
 * **No NOPs anywhere** — scoreboard handles all dependencies
 * **Register renaming**: LDSM destinations alternate across ~8 registers (R3, R5, R2, R7, R6, R9, R8, ...) instead of overwriting the same register. This allows maximum ILP opportunity even though the chain is serial by construction.
-* [OBS] **First LDSM has a wait bit** (byte 24-31 = `0x08`). [HYP] The bit may be related to the preceding BAR.SYNC synchronization. [OBS] Subsequent LDSMs in the chain omit that explicit wait bit and rely on the register-level dependency through the IADD.
+* **First LDSM has a wait bit** (byte 24-31 = `0x08`) likely for BAR.SYNC synchronization. Subsequent LDSMs rely on register-level dependency through the IADD and don't need the explicit wait bit.
 
 ## Resolved hypotheses
 

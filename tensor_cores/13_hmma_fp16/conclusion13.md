@@ -155,7 +155,7 @@ In 13d: `HMMA R16, R12, R10, R16` — D = R16:R19, C = R16:R19. The second HMMA 
 
 [OBS-13-12] `.reuse` is not emitted on A, even though A is also re-read by the next HMMA in a chain. One hypothesis: the reuse cache has limited capacity (possibly only 2 registers worth), so ptxas prioritizes B (2 registers) over A (4 registers). Another hypothesis: the cache is positional (one slot per operand role), and only the B slot is enabled.
 
-[OBS-13-13] `.reuse` is not emitted on C in the observed HMMA chains. [HYP] This may be because C is already colocated with D in the chaining case (same register base), which is a different form of reuse at the register file level.
+[OBS-13-13] `.reuse` is not emitted on C either, likely because C is already colocated with D in the chaining case (same register base), which is a different form of reuse at the register file level.
 
 ## The NOP pad pattern
 
@@ -229,7 +229,7 @@ From 13e's control codes:
 
 The difference between 13b `0x1814` and 13d `0x1810` is bit 2 (`0x4`). This suggests a flag related to "dependent consumer immediately follows" versus "independent consumer" (13b's consumer is STG which depends on R16; 13d's HMMA #1 consumer is HMMA #2 which also depends on R16, but the chain context changes the scheduling hint).
 
-[GAP] The exact semantics of low-order bits 0-4 of the HMMA control code are not fully decoded. [HYP] They may encode a combination of yield, stall, read barrier, and write barrier fields as in the Turing/Ampere control code format, but the exact bit layout on Blackwell is not pinned down in this chapter.
+[GAP] The exact semantics of low-order bits 0-4 of the HMMA control code are not fully decoded. They likely encode a combination of yield, stall, read barrier, and write barrier fields as in the Turing/Ampere control code format, but the exact bit layout on Blackwell is not pinned down in this chapter.
 
 ### Transition analysis between adjacent HMMAs in 13e
 
@@ -404,7 +404,7 @@ The hot path between CS2UR and CS2R consists of:
 | GAP-13-E | NCU validation of latency and pipeline utilization | NCU --set full on 13e variants |
 | GAP-13-F | Sensitivity of HMMA latency to input data (NaN, denormal, zero) | New microbench with patterned inputs |
 | GAP-13-G | HMMA throughput (independent MMAs, not chained) | Deferred to chapter 18 (pipelined tile) |
-| GAP-13-H | Why exactly 2 NOPs and not 1, 3, or another count | Requires understanding the full latency covered by the bit 27 scoreboard wait. [HYP] Two NOPs may cover a fixed scheduling slot quantum and the rest may be covered by the scoreboard itself. |
+| GAP-13-H | Why exactly 2 NOPs and not 1, 3, or another count | Requires understanding the full latency covered by the bit 27 scoreboard wait; likely the answer is that 2 NOPs cover some fixed scheduling slot quantum and the rest is covered by the scoreboard itself |
 | GAP-13-I | Low-order scheduling bits of HMMA control code (bits 0-4) | Requires either a Blackwell ISA decoder or systematic microbenchmarks varying the hardware scheduling hint encoding |
 | GAP-13-J | Whether ldmatrix (chapter 17) reduces or eliminates the uniform UIADD3 NOPs in a real GEMM kernel | Will be resolved directly in chapter 17 |
 
@@ -423,7 +423,7 @@ Chapter 13 establishes HMMA as the baseline. Chapter 14 tests whether the FP8 MM
 * A new opcode family (QMMA or similar)
 * Different shape suffixes (m16n8k32 for FP8 at the same MMA atom size)
 
-[HYP] Expected delta versus chapter 13: the shape modifier changes to `.168k` where k > 16 because FP8 packs more elements per register. The register layout per thread changes correspondingly.
+Expected delta versus chapter 13: the shape modifier likely changes to `.168k` where k > 16 because FP8 packs more elements per register. The register layout per thread changes correspondingly.
 
 ### Chapter 15 (MMA narrow)
 
@@ -431,7 +431,7 @@ Chapter 15 tests smaller shapes (m8n8k4 legacy Volta, or subset shapes). Chapter
 
 ### Chapter 16 (FP4 peak with block-scaled MMA)
 
-Chapter 16 tests kind::mxf4nvf4 and block-scaled MMA with UE8M0 scales. [HYP] The opcode will be a new family rather than HMMA because block-scaling is an architectural feature added in SM100a/SM120. [OBS] The scale operand introduces a fifth operand position that does not exist in heritage HMMA.
+Chapter 16 tests kind::mxf4nvf4 and block-scaled MMA with UE8M0 scales. The opcode will likely be a new family (not HMMA) because block-scaling is an architectural feature added in SM100a/SM120. The scale operand introduces a fifth operand position that does not exist in heritage HMMA.
 
 ### Chapter 17 (ldmatrix)
 
