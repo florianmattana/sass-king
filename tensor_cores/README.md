@@ -37,9 +37,10 @@ Not in scope on SM120 (architecturally unavailable):
 | [19_sparse_mma/](./19_sparse_mma/) | 2:4 structured sparsity MMA | Sparse forms are `QMMA.SP`, `QMMA.SF.SP`, and `OMMA.SF.SP`; metadata is an explicit register operand |
 | [20_control_flow/](./20_control_flow/) | Control flow | Constant loops fully unroll by default; preserved loops expose back-edge BRA; 8 x 2 HMMA probe emits 16 HMMAs |
 | [21_divergence_reconvergence/](./21_divergence_reconvergence/) | Divergence and reconvergence | Lane divergence alone does not always force BSSY/BSYNC; ptxas also uses predication, FSEL/UFSEL, predicated EXIT, VOTE, WARPSYNC.ALL, and local CALL patterns |
-| 22_stmatrix/ | stmatrix / matrix store | Planned: STSM if present, fallback STS sequence if not present |
-| 23_fragment_layout/ | FP4 / FP6 fragment layout | Planned: E2M1, E3M2, E2M3 packing and runtime validation |
-| 24_production_mini_gemm/ | Production mini-GEMM audit | Planned: LDGSTS + LDSM + QMMA/OMMA + STG end-to-end |
+| [22_stmatrix/](./22_stmatrix/) | stmatrix / matrix store | STSM exists for m8n8 b16: `STSM.16.M[T]88[.2|.4]`; tested m16n8 b8 forms are target-qualified |
+| [23_fragment_layout/](./23_fragment_layout/) | FP4 / FP6 fragment layout | 22 probes: dense QMMA, LDSM-fed QMMA, scale-vector OMMA, sparse metadata; runtime smoke done, full decode open |
+| [24_production_mini_gemm/](./24_production_mini_gemm/) | Production mini-GEMM audit | 30 production-like probes: LDGSTS, LDSM, HMMA/QMMA/OMMA, STSM, STG, REDG, cold paths |
+| [25_stsm_epilogue/](./25_stsm_epilogue/) | STSM epilogue layout and storeback semantics | 26 probes: STSM layout, MMA epilogues, STS fallback, conversions, storeback, b8 compatibility |
 
 ## Phase 3 gate
 
@@ -49,12 +50,14 @@ Required before Phase 3:
 
 - [x] Chapter 20 - Control flow
 - [x] Chapter 21 - Divergence and reconvergence
-- [ ] Chapter 22 - stmatrix / matrix store
+- [x] Chapter 22 - stmatrix / matrix store
 
 Strongly recommended before Phase 3:
 
-- [ ] Chapter 23 - FP4 / FP6 fragment layout
-- [ ] Chapter 24 - Production mini-GEMM audit
+- [x] Chapter 23 - FP4 / FP6 fragment layout
+- [x] Chapter 24 - Production mini-GEMM audit
+- [x] Chapter 25 - STSM epilogue layout and storeback semantics
+- [ ] Audit confidence framework - methodology checklist for qualifying production-kernel conclusions
 
 Deferred and non-blocking for Phase 3:
 
@@ -68,11 +71,11 @@ Same controlled variation methodology as chapters 01-12. One minimal change per 
 
 Kernels use inline PTX `asm volatile` rather than CUTLASS wrappers to minimize compiler noise. CUTLASS wrappers may be used for comparison in specific variants.
 
-## Relationship with FINDINGS.md
+## Relationship with knowledge/
 
-Tensor core findings live in the main `FINDINGS.md` at the root of the repo, under dedicated `## Kernel <N>` sections. This is consistent with the project's principle of avoiding document proliferation: new opcodes extend the Pipelines table, new canonical patterns go in the Canonical patterns section, new architectural invariants go in Architectural invariants.
+Tensor core findings live in `../knowledge/FINDINGS.md`, under dedicated `## Kernel <N>` sections. Reusable instruction-family facts live in `../knowledge/SASS_INSTRUCTIONS_SM120.md` and `../knowledge/encoding/`.
 
-The per-chapter `conclusion{N}.md` files here document the narrative of the chapter (what we tried, in what order, what the deltas were). They complement but do not duplicate FINDINGS.md.
+The per-chapter `conclusion{N}.md` files here document the narrative of the chapter (what we tried, in what order, what the deltas were). They complement but do not duplicate the global knowledge files.
 
 ## Status
 
@@ -87,11 +90,12 @@ The per-chapter `conclusion{N}.md` files here document the narrative of the chap
 | 19 | **Done** | 19a-19m (13) | QMMA.SP.16864, QMMA.SF.SP.16864, OMMA.SF.SP.168128 |
 | 20 | **Done** | 20a-20v (22) | BRA, BRA.U, predication, BSSY/BSYNC for break |
 | 21 | **Done** | 21a-21t (20) | BSSY/BSYNC, VOTE.ANY, SHFL.IDX, WARPSYNC.ALL, predicated EXIT |
-| 22 | Planned | - | STSM or STS fallback |
-| 23 | Planned | - | FP4 / FP6 fragment packing |
-| 24 | Planned | - | Production mini-GEMM pattern |
+| 22 | **Done** | 22a-22l (12) | STSM.16.M88, STSM.16.MT88, STS.128 fallback |
+| 23 | **SASS + runtime smoke done** | 23a-23v (22) | QMMA.16832 FP4/FP6, QMMA.SF, OMMA.SF.4X, QMMA.SF.SP, LDSM-fed QMMA |
+| 24 | **SASS + runtime smoke done** | 24a-24ad (30) | LDGSTS, LDSM, HMMA/QMMA/OMMA, STSM, STG, REDG |
+| 25 | **SASS + runtime smoke done** | 25a-25z (26) | STSM.16.M88/MT88, STS.128, F2F.F16/BF16, MMA-to-STSM, STG |
 
-Chapters 13, 14, 16, 17, 18, and 19 decode the core tensor-core instruction families. Chapter 20 closes the first control-flow gate for loop lowering and back-edge detection. Chapter 21 closes the first divergence/reconvergence gate for the tested lane-divergent patterns. Chapters 22 through 24 remain required or strongly recommended before the pattern library because production audits also need matrix-store behavior, fragment layout, and an end-to-end mini-GEMM validation.
+Chapters 13, 14, 16, 17, 18, and 19 decode the core tensor-core instruction families. Chapter 20 closes the first control-flow gate for loop lowering and back-edge detection. Chapter 21 closes the first divergence/reconvergence gate for the tested lane-divergent patterns. Chapter 22 closes the first matrix-store gate for m8n8 b16 STSM. Chapter 23 closes first-pass FP4/FP6 SASS coverage and runtime smoke execution for fragment-layout probes, with full lane-to-value decode still open. Chapter 24 closes first-pass production-like mini-GEMM SASS coverage and runtime smoke execution, but remains structural rather than a full numeric GEMM correctness suite. Chapter 25 closes first-pass STSM epilogue/storeback SASS coverage and runtime smoke execution. The audit confidence framework remains open so production-kernel conclusions can be qualified explicitly.
 
 ## SM120 MMA opcode landscape (after chapter 19)
 

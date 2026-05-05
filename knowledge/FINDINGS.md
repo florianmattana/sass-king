@@ -1229,10 +1229,12 @@ Chapter 15 closes the remaining narrow-QMMA dtype combination that chapter 14 di
 * [RES] Chapter 15 operand-order asymmetry test resolved the control-code part: reversing E3M2/E2M3 mirrors the A/B dtype bits exactly. Value-layout asymmetry remains untested at runtime in this environment.
 
 ### Open gaps
-* [GAP] FP6 element packing inside the A/B uint32 fragments remains undocumented. 15f provides a raw-pattern probe source and SASS dump, but runtime data is blocked until the NVIDIA driver is available.
-* [GAP] FP4 E2M1 fragment layout remains unresolved from GAP-14d-1. 15g provides a raw-nibble probe source and SASS dump, but runtime data is blocked until the NVIDIA driver is available.
-* [GAP] Unscaled E2M1 QMMA latency is not measured. 15h compiles the intended N=16/32/64 chains, but runtime timing is blocked by the unavailable NVIDIA driver.
-* [GAP] Mixed FP6 E3M2 × E2M3 latency is not measured. 15i compiles the intended N=16/32/64 chains, but runtime timing is blocked by the unavailable NVIDIA driver.
+* [GAP] FP6 element packing inside the A/B uint32 fragments remains decode-unresolved. Chapter 23 adds first-pass SASS coverage and runtime smoke outputs for FP6 baseline, mixed, lane-pattern, and operand-order probes, but the full lane-to-value map is not decoded yet.
+* [GAP] FP4 E2M1 fragment layout remains decode-unresolved from GAP-14d-1. Chapter 23 adds first-pass SASS coverage and runtime smoke outputs for E2M1 baseline, lane-pattern, LDSM-fed, direct-register, K-boundary, register-boundary, and special-value probes, but the full lane-to-value map is not decoded yet.
+* [OBS] Unscaled E2M1 QMMA latency probes run on the host GPU: N=16 total 1074 cycles, N=32 total 1639 cycles, N=64 total 2737 cycles.
+* [INF] The unscaled E2M1 QMMA marginal latency from N=32 to N=64 is approximately 34.3 cycles per QMMA.
+* [OBS] Mixed FP6 E3M2 x E2M3 latency probes run on the host GPU: N=16 total 1075 cycles, N=32 total 1636 cycles, N=64 total 2743 cycles.
+* [INF] The mixed FP6 E3M2 x E2M3 marginal latency from N=32 to N=64 is approximately 34.6 cycles per QMMA.
 * [GAP] The SASS-level cause of the k=32 FP4 throughput gap versus k=64 block-scaled OMMA remains chapter 16's shape/family distinction until 15h can be run on hardware.
 
 ### New instructions observed in this chapter
@@ -1340,7 +1342,7 @@ The low byte of the opcode is a reliable family identifier.
 * `.UE4M3` suffix: scale dtype ue4m3 (full notation for fine-grained mode)
 * `.4X` suffix on OMMA: scale_vec::4X (finer granularity than default 2X)
 ### Implications for production kernel audit
-With chapters 13 (HMMA), 14 (QMMA), 16 (dense block-scaled), 17 (LDSM), 18 (cp.async pipeline), and 19 (sparse MMA), the repo documents the observed warp-level tensor-core opcode families emitted by `mma.sync` and `mma.sp` on SM120. [INF] This is sufficient to identify dense and sparse tensor-core instructions in production GEMM, FP4 quantized inference, and block-scaled attention dumps. [INF] After chapters 20 and 21, the repo also covers tested loop lowering and first-pass divergence/reconvergence patterns, but it is still not sufficient for a complete end-to-end audit because matrix-store behavior, FP4/FP6 fragment layout, runtime validation, and production mini-GEMM integration still have open gaps.
+With chapters 13 (HMMA), 14 (QMMA), 16 (dense block-scaled), 17 (LDSM), 18 (cp.async pipeline), 19 (sparse MMA), 20 (control flow), 21 (divergence/reconvergence), 22 (STSM), 23 (FP4/FP6 fragment-layout probes), and 24 (production mini-GEMM audit), the repo documents the observed warp-level tensor-core opcode families emitted by `mma.sync`, `mma.sp`, `ldmatrix`, and `stmatrix` on SM120, plus a first-pass end-to-end pipeline fixture. [INF] This is sufficient for first-pass identification of dense, sparse, block-scaled, matrix-load, matrix-store, async-copy, global-store, and reduction instructions in production dumps. [INF] It is still not sufficient for complete production epilogue auditing because full FP4/FP6 lane-to-value decode, STSM epilogue/storeback semantics, and audit-confidence qualification still have open gaps.
 ### Diagnostic workflow for block-scaled MMA in production
 When auditing a block-scaled SASS dump:
 1. Identify the MMA family via low byte: 0x3c = HMMA, 0x7a = QMMA, 0x7f = OMMA.
@@ -1459,7 +1461,7 @@ Chapter establishing the LDSM SASS opcode family — the realization of `ldmatri
 * [RES] Chain overhead ~0 for LDSM, vs ~310 for HMMA and ~510 for QMMA.
 ### Open gaps
 * [GAP] `.trans` variants x1 and x2 not compiled/verified (inferred only). Predictions: `LDSM.16.MT88` and `LDSM.16.MT88.2`.
-* [GAP] `stmatrix` (STSM?) not tested. PTX `stmatrix.sync.aligned.*` introduced in SM90. Might exist as a separate opcode on SM120, or fall back to STS sequence. Needs its own section.
+* [RES] `stmatrix` is covered by Chapter 22 for tested m8n8 b16 forms. Those forms lower to `STSM.16.M[T]88[.2|.4]`; scalar shared-store fallback remains `STS.128`.
 * [GAP] LDSM width > 4 not tested. The 2-bit width field value 3 is unused — probably reserved.
 * [GAP] LDSM with larger elements (e.g., `.b32` variant) not tested. The `.16` in the mnemonic suggests an element size field that could hold other values.
 * [GAP] LDSM combined with cp.async (LDGSTS) in a full pipelined tile not tested. Needs chapter 18 (pipelined tile).
@@ -1671,7 +1673,7 @@ When auditing a production SASS dump:
 ### Open gaps
 
 * [GAP] Runtime validity of metadata patterns `0xaaaaaaaa`, `0x55555555`, and `0xffffffff` is not measured because the local NVIDIA driver is unavailable.
-* [GAP] Sparse QMMA and sparse OMMA latency are not measured because runtime timing is blocked by the unavailable NVIDIA driver.
+* [GAP] Sparse QMMA and sparse OMMA latency are not measured. Chapter 19 establishes SASS forms, but a dedicated sparse latency run is still needed.
 * [GAP] Exact bit-level meaning of the sparse `.SP` modifier inside QMMA and OMMA opcode/control fields is not fully decoded.
 * [GAP] Selector semantics for all warp-level sparse families are not fully mapped. Selector `1` is rejected for the tested `kind::f8f6f4` form, but other shapes and legacy `mma.sp` forms were not exhaustively compiled.
 
@@ -1828,6 +1830,182 @@ When auditing a production SASS dump:
 
 ---
 
+## Kernel 22 stmatrix / matrix store
+
+* [OBS] Chapter 22 establishes SM120 matrix-store behavior for 12 controlled variants covering m8n8 b16 STSM x1/x2/x4, transposed STSM x1/x2/x4, scalar STS fallback, layout readback shapes, barrier/no-barrier dependency shapes, and HMMA-adjacent STSM.
+
+### Variants and outcomes
+
+* [OBS] 22a `stmatrix.sync.aligned.x1.m8n8.shared.b16` emits 32 instructions and `STSM.16.M88 [R7], R2`.
+* [OBS] 22b `stmatrix.sync.aligned.x2.m8n8.shared.b16` emits 32 instructions and `STSM.16.M88.2 [R0], R6`.
+* [OBS] 22c `stmatrix.sync.aligned.x4.m8n8.shared.b16` emits 32 instructions and `STSM.16.M88.4 [R0], R8`.
+* [OBS] 22d `stmatrix.sync.aligned.x1.trans.m8n8.shared.b16` emits 32 instructions and `STSM.16.MT88 [R7], R2`.
+* [OBS] 22e `stmatrix.sync.aligned.x2.trans.m8n8.shared.b16` emits 32 instructions and `STSM.16.MT88.2 [R0], R6`.
+* [OBS] 22f `stmatrix.sync.aligned.x4.trans.m8n8.shared.b16` emits 32 instructions and `STSM.16.MT88.4 [R0], R8`.
+* [OBS] 22g scalar shared-store fallback emits 32 instructions and `STS.128 [R0], R8`.
+* [OBS] 22h x4 layout readback emits 40 instructions, `STSM.16.M88.4`, `BAR.SYNC.DEFER_BLOCKING 0x0`, and `LDS.128`.
+* [OBS] 22i x4 transposed layout readback emits 40 instructions, `STSM.16.MT88.4`, `BAR.SYNC.DEFER_BLOCKING 0x0`, and `LDS.128`.
+* [OBS] 22j barrier visibility probe emits 32 instructions, `STSM.16.M88.4`, `BAR.SYNC.DEFER_BLOCKING 0x0`, and `LDS R7, [R6+UR4]`.
+* [OBS] 22k no-barrier same-thread probe emits 32 instructions with adjacent `STSM.16.M88.4 [R0], R8` and `LDS R7, [R0]`.
+* [OBS] 22l HMMA-adjacent STSM emits 40 instructions, `HMMA.16816.F32 R8, R4, R8, RZ`, and later `STSM.16.M88.4 [R0], R8`.
+
+### STSM family rules established
+
+* [RES] `stmatrix.sync.aligned.x{1,2,4}.m8n8.shared.b16` lowers to the SM120 SASS family `STSM.16.M88[.2|.4]`.
+* [RES] `stmatrix.sync.aligned.x{1,2,4}.trans.m8n8.shared.b16` lowers to the SM120 SASS family `STSM.16.MT88[.2|.4]`.
+* [OBS] The tested STSM instruction low opcode byte is `0x44`.
+* [OBS] Normal x1 and transposed x1 share the visible instruction word `0x0000000207007844`, while their printed second line differs: normal `0x010fe20000000000`, transposed `0x010fe20000004000`.
+* [OBS] Normal x4 and transposed x4 share the visible instruction word `0x0000000800007844`, while their printed second line differs: normal `0x010fe20000000200`, transposed `0x010fe20000004200`.
+* [INF] For the tested pairs, the transposed modifier is represented by a `0x4000` delta in the printed second line.
+* [OBS] The scalar fallback variant emits `STS.128`, not `STSM`.
+* [INF] Scalar shared stores may vectorize into `STS.128`, but they remain a different store family from matrix-store STSM.
+
+### Unsupported forms and runtime gaps
+
+* [OBS] The opt-in b8 probe attempts `stmatrix.sync.aligned.m16n8.x1.trans.shared.b8`, `.x2`, and `.x4`.
+* [OBS] ptxas rejects the opt-in b8 probe for `sm_120` with `Feature '.m16n8' not supported on .target 'sm_120'`.
+* [OBS] ptxas rejects the opt-in b8 probe for `sm_120` with `Feature 'stmatrix.b8' not supported on .target 'sm_120'`.
+* [RES] The tested SM120 target does not support the tested m16n8 b8 STSM PTX forms.
+* [OBS] Runtime smoke probes for normal and transposed x4 STSM run on the host GPU.
+* [OBS] 22h normal x4 first output words are `00001000 00001001 00001002 00001003 00001004 00001005 00001006 00001007`.
+* [OBS] 22i transposed x4 first output words are `10041000 100c1008 10141010 101c1018 00000000 00000000 00000000 00000000`.
+* [OBS] 22j barrier visibility first output words are `00001004 00001008 0000100c 00001010 00001014 00001018 0000101c 00001020`.
+* [OBS] 22k no-barrier same-thread first output words are `00001000 00001004 00001008 0000100c 00001010 00001014 00001018 0000101c`.
+* [GAP] Full STSM lane-to-shared layout semantics remain undecoded from the runtime outputs.
+* [GAP] STSM latency is not measured.
+* [GAP] STSM scoreboard and control-code fields are not decoded beyond the printed SASS/control annotations.
+* [GAP] A full production accumulator-to-shared epilogue remains unvalidated.
+
+---
+
+## Kernel 23 FP4 / FP6 fragment layout
+
+* [OBS] Chapter 23 compiles 22 controlled probes, 23a through 23v, for FP4 / FP6 fragment-layout use cases on SM120.
+* [OBS] The accepted probes require `nvcc -arch=compute_120a -code=sm_120a`, matching the `kind::f8f6f4`, `kind::mxf8f6f4`, and `kind::mxf4nvf4` requirements established in Chapters 14, 16, and 19.
+
+### Variants and outcomes
+
+* [OBS] 23a E2M1 x E2M1 emits 48 instructions and `QMMA.16832.F32.E2M1.E2M1`.
+* [OBS] 23b E3M2 x E3M2 emits 48 instructions and `QMMA.16832.F32.E3M2.E3M2`.
+* [OBS] 23c E2M3 x E2M3 emits 48 instructions and `QMMA.16832.F32.E2M3.E2M3`.
+* [OBS] 23d E3M2 x E2M3 emits 48 instructions and `QMMA.16832.F32.E3M2.E2M3`.
+* [OBS] 23e E2M3 x E3M2 emits 48 instructions and `QMMA.16832.F32.E2M3.E3M2`.
+* [OBS] 23f, 23g, and 23h lane-pattern probes emit the expected dense `QMMA.16832` dtype mnemonics for E2M1, E3M2, and E2M3.
+* [OBS] 23i scale-factor interaction emits `QMMA.SF.16832.F32.E4M3.E4M3.E8`.
+* [OBS] 23j LDSM-to-QMMA emits `LDSM.16.M88.2`, `LDSM.16.M88.4`, and later `QMMA.16832.F32.E2M1.E2M1`.
+* [OBS] 23k direct-register path emits `QMMA.16832.F32.E2M1.E2M1` without LDSM.
+* [OBS] 23l runtime-decode probe emits `QMMA.16832.F32.E2M1.E2M1` and runs on the host GPU with first output words `c1d80000 c1d80000 c3220000 c3220000`.
+* [OBS] 23m invalid-format probe attempts `kind::f8f6f4` with E2M1 x BF16 and is rejected by ptxas with `Unexpected instruction types specified for 'mma'`.
+* [OBS] 23n cross-reference probe emits `QMMA.16832.F32.E3M2.E2M3`, matching the Chapter 15 mixed-FP6 family.
+* [OBS] 23o unsigned/signed interpretation probe emits `QMMA.16832.F32.E2M1.E2M1`.
+* [OBS] 23p scale-vector probe emits `OMMA.SF.16864.F32.E2M1.E2M1.UE4M3.4X`.
+* [OBS] 23q metadata-independence probe emits `QMMA.SF.SP.16864.F32.E3M2.E2M1.E8`.
+* [OBS] 23r operand-order probe emits `QMMA.16832.F32.E3M2.E2M3`.
+* [OBS] 23s K-tile boundary probe emits 56 instructions and `QMMA.16832.F32.E2M1.E2M1`.
+* [OBS] 23t register-pair boundary probe emits `QMMA.16832.F32.E2M1.E2M1`.
+* [OBS] 23u zero / NaN / Inf bit-pattern probe emits `QMMA.16832.F32.E2M1.E2M1`.
+* [OBS] 23v shared-memory alignment probe emits offset `LDSM.16.M88.2`, offset `LDSM.16.M88.4`, and later `QMMA.16832.F32.E2M1.E2M1`.
+
+### Fragment-layout rules established
+
+* [RES] The tested dense FP4/FP6 source forms stay in the `QMMA.16832` family; the A and B dtypes are explicit in the SASS mnemonic.
+* [RES] Dense E2M1, E3M2, E2M3, and mixed E3M2/E2M3 forms share the tested low opcode byte `0x7a`.
+* [RES] LDSM-fed FP4 QMMA is structurally visible as an LDSM stage followed by QMMA, while direct-register FP4 QMMA has no LDSM stage.
+* [RES] Scale factors and sparse metadata remain explicit SASS operands in the tested `QMMA.SF`, `OMMA.SF`, and `QMMA.SF.SP` probes.
+* [INF] A production audit model should treat fragment data, scale factors, sparse metadata, and shared-memory fragment loads as separate channels.
+
+### Runtime gaps
+
+* [OBS] All accepted Chapter 23 runtime smoke probes execute on the host GPU after fixing the LDSM B-fragment shared-memory stride to 16 bytes.
+* [GAP] FP4/FP6 full lane-to-value mapping remains undecoded from the runtime outputs.
+* [GAP] E3M2 and E2M3 exact bit packing within each 32-bit source register remains unresolved without runtime decode.
+* [GAP] Special-value interpretation for zero, sign-bit, NaN-like, and Inf-like patterns remains unresolved without runtime decode.
+* [GAP] LDSM-fed QMMA correctness for packed FP4/FP6 values remains structural only until outputs are checked on hardware.
+
+---
+
+## Kernel 24 Production mini-GEMM audit
+
+* [OBS] Chapter 24 compiles 30 controlled probes, 24a through 24ad, for production-like mini-GEMM audit structure on SM120.
+* [OBS] The probes require `nvcc -arch=compute_120a -code=sm_120a`, matching the arch-conditional tensor-core forms established in Chapters 14, 16, 19, and 23.
+* [OBS] Runtime smoke execution succeeds on the host RTX 5070 Ti for all 30 variants.
+* [GAP] The chapter validates structural SASS signatures and launchability, not full numeric GEMM correctness.
+
+### Variants and outcomes
+
+* [OBS] 24a emits `HMMA.16816.F32` and `STG.E.128`.
+* [OBS] 24b emits `QMMA.16832.F32.E4M3.E4M3` and `STG.E.128`.
+* [OBS] 24c emits `QMMA.16832.F32.E2M1.E2M1` and `STG.E.128`.
+* [OBS] 24d emits `OMMA.SF.16864.F32.E2M1.E2M1.UE4M3.4X` and `STG.E.128`.
+* [OBS] 24e, 24f, 24t, and 24x emit production-like async staging: `LDGSTS`, `LDGDEPBAR`, `DEPBAR.LE`, `BAR`, `LDSM`, `HMMA`, and `STG`.
+* [OBS] 24g and 24q isolate LDSM order and shared-memory alignment before `HMMA`.
+* [OBS] 24h emits four chained `QMMA.16832.F32.E4M3.E4M3` instructions.
+* [OBS] 24i is a store-only epilogue baseline and emits `STG.E.128` with no MMA.
+* [OBS] 24j and 24k emit `STSM.16.M88.4` epilogue structure after QMMA.
+* [OBS] 24l and 24y cover bounded/vectorized `STG.E.128` epilogues after `HMMA`.
+* [OBS] 24m and 24n cover preserved and unrolled tile-loop HMMA structure.
+* [OBS] 24o emits predicated guarded HMMA plus `WARPSYNC.ALL`.
+* [OBS] 24p increases instruction count to 112 useful instructions while retaining `HMMA` and `STG`.
+* [OBS] 24r emits `QMMA.SP.16864.F32.E4M3.E4M3`.
+* [OBS] 24s emits `OMMA.SF.SP.168128.F32.E2M1.E2M1.UE4M3.4X`.
+* [OBS] 24u emits warp-level `HMMA` and no `WGMMA` or `TCGEN` mnemonics.
+* [OBS] 24v and 24w expose uniform-register and descriptor/address arithmetic paths feeding tensor-core work.
+* [OBS] 24z emits `REDG.E.ADD.F32.FTZ.RN.STRONG.GPU`, separating split-K style reduction from normal `STG.E.128`.
+* [OBS] 24aa loads scale operands with `LDG.E.CONSTANT` before `OMMA.SF...UE4M3.4X`.
+* [OBS] 24ab loads sparse metadata with `LDG.E.CONSTANT` before `QMMA.SP`.
+* [OBS] 24ac uses nontrivial stride parameters before `HMMA`.
+* [OBS] 24ad emits `BSSY.RECONVERGENT`, `BSYNC.RECONVERGENT`, and `BPT.TRAP` around the cold path.
+
+### Production audit rules established
+
+* [RES] A first-pass SM120 mini-GEMM audit should segment the dump into global-to-shared copy, async dependency wait, shared matrix load, tensor-core compute, epilogue, optional reduction, and cold/error paths.
+* [RES] Scale values and sparse metadata should be tracked as separate dependency channels from fragment data; Chapter 24 shows both channels feeding their MMA operands through visible loads.
+* [RES] Split-K or multi-CTA accumulation can be recognized separately from vectorized stores by looking for `REDG.E.ADD.F32...`.
+* [RES] The tested production-like SM120 path remains warp-level: `HMMA`, `QMMA`, `OMMA`, sparse modifiers, `LDSM`, `STSM`, `LDGSTS`, `DEPBAR`, and `STG`; no `WGMMA` or `TCGEN` appears.
+* [GAP] STSM lane-to-shared layout and accumulator storeback semantics remain Chapter 25 scope.
+
+---
+
+## Kernel 25 STSM epilogue layout and storeback semantics
+
+* [OBS] Chapter 25 compiles 25 accepted executable SASS probes and one b8 compatibility probe, 25a through 25z, for STSM epilogue/storeback behavior on SM120/SM120a.
+* [OBS] The accepted probes require `nvcc -arch=compute_120a -code=sm_120a` and runtime smoke execution succeeds on the host RTX 5070 Ti.
+* [OBS] The 25q compatibility probe compiles with plain `sm_120` and captures ptxas rejection for `.m16n8` and `stmatrix.b8`; the same source compiles for `sm_120a` and emits `STSM.8.MT168`, `STSM.8.MT168.2`, and `STSM.8.MT168.4`.
+* [GAP] Full lane-to-value semantic decode remains open over the captured runtime output words.
+
+### Variants and outcomes
+
+* [OBS] 25a, 25b, and 25c emit `STSM.16.M88`, `STSM.16.M88.2`, and `STSM.16.M88.4`.
+* [OBS] 25d, 25e, and 25f emit `STSM.16.MT88`, `STSM.16.MT88.2`, and `STSM.16.MT88.4`.
+* [OBS] 25g emits `HMMA.16816.F32` before `STSM.16.M88.4`.
+* [OBS] 25h emits `QMMA.16832.F32.E2M1.E2M1` before `STSM.16.M88.4`.
+* [OBS] 25i emits HMMA, STSM, `BAR.SYNC.DEFER_BLOCKING`, `LDS.128`, and `STG.E`.
+* [OBS] 25j emits `STS.128` rather than STSM, preserving the scalar/vector shared-store fallback distinction.
+* [OBS] 25k covers predicated tail storeback after STSM.
+* [OBS] 25l emits offset `STSM.16.M88.4 [R+0x20]` and offset `LDS.128`.
+* [OBS] 25m emits the normal barrier-visible sequence: STSM, `BAR.SYNC.DEFER_BLOCKING`, `LDS.128`.
+* [OBS] 25n emits adjacent STSM and `LDS` without `BAR.SYNC`, useful only as a same-thread/no-barrier contrast.
+* [OBS] 25o emits two `STSM.16.M88.4` stores and two `LDS.128` reloads for split accumulator storeback.
+* [OBS] 25p and 25z emit two `LDS.128` reloads and eight global stores for runtime layout decode tables.
+* [OBS] 25s emits `F2F.F16.F32` conversions before STSM.
+* [OBS] 25t emits `F2F.BF16.F32` conversions before STSM.
+* [OBS] 25u emits `OMMA.SF.16864.F32.E2M1.E2M1.UE4M3.4X` before STSM.
+* [OBS] 25v emits `QMMA.SP.16864.F32.E4M3.E4M3` before STSM.
+* [OBS] 25w emits noncontiguous global stores at 8-byte-spaced offsets.
+* [OBS] 25x keeps `STSM.16.M88.4` under strided shared addressing.
+* [OBS] 25y grows to 232 useful instructions under register-pressure arithmetic and still preserves STSM, barrier, shared reload, and global storeback.
+
+### Epilogue rules established
+
+* [RES] Cross-thread STSM storeback should be modeled as `STSM -> BAR -> LDS -> STG` in first-pass production audits.
+* [RES] Same-thread no-barrier STSM readback can compile, but Chapter 25 does not prove cross-thread visibility is safe without a barrier.
+* [RES] STS fallback is distinct from STSM: the tested scalar fallback emits `STS.128`.
+* [RES] Accumulator narrowing before STSM is visible as `F2F.F16.F32` or `F2F.BF16.F32`, separate from the STSM opcode itself.
+* [RES] HMMA, QMMA, OMMA, and sparse QMMA accumulator paths can feed visible STSM epilogues in the tested SM120a probes.
+* [RES] b8 STSM support is target-qualified: rejected for tested plain `sm_120`, accepted for tested `sm_120a` as `STSM.8.MT168`.
+
+---
+
 # Additions to the Cross chapter summary section
 
 ## Tensor-core cross-chapter summary
@@ -1836,35 +2014,41 @@ When auditing a production SASS dump:
 
 | Pipeline / role | SASS families observed | Evidence |
 |---|---|---|
-| Tensor core MMA | [OBS] `HMMA`, `QMMA`, `OMMA`, `QMMA.SP`, `QMMA.SF.SP`, `OMMA.SF.SP` | chapters 13, 14, 16, 19 |
-| Matrix load | [OBS] `LDSM.16.M[T]88[.N]` | chapter 17 |
-| Async global-to-shared copy | [OBS] `LDGSTS`, `LDGDEPBAR`, `DEPBAR.LE SB0, N` | chapter 18 |
+| Tensor core MMA | [OBS] `HMMA`, `QMMA`, `QMMA.SF`, `OMMA.SF`, `QMMA.SP`, `QMMA.SF.SP`, `OMMA.SF.SP` | chapters 13, 14, 16, 19, 23, 24 |
+| Matrix load | [OBS] `LDSM.16.M[T]88[.N]` | chapters 17, 24 |
+| Matrix store | [OBS] `STSM.16.M[T]88[.2|.4]`, `STSM.8.MT168` on tested `sm_120a` b8 form | chapters 22, 24, 25 |
+| Async global-to-shared copy | [OBS] `LDGSTS`, `LDGDEPBAR`, `DEPBAR.LE SB0, N` | chapters 18, 24 |
+| Global epilogue/reduction | [OBS] `STG.E.128`, `REDG.E.ADD.F32...` | chapter 24 |
 
 ### Architectural invariants
 
 * [OBS] Dense HMMA, dense QMMA, dense OMMA, and tested sparse QMMA/OMMA forms are warp-level instructions on SM120. The SASS contains one instruction executed by the warp, with fragment operands distributed across the 32 participating lanes.
-* [OBS] No `wgmma.mma_async` or `tcgen05.mma` appears in the SM120 dumps studied through chapter 19.
+* [OBS] No `wgmma.mma_async` or `tcgen05.mma` appears in the SM120 dumps studied through chapter 24.
 * [OBS] Tensor-core family selection is visible in the mnemonic and low opcode byte: `HMMA` low byte `0x3c`, `QMMA` low byte `0x7a`, and `OMMA` low byte `0x7f`.
 * [INF] Sparse tensor-core forms are modifiers on the dense QMMA/OMMA families for the tested SM120 forms, because `QMMA.SP` and `QMMA.SF.SP` keep low byte `0x7a`, while `OMMA.SF.SP` keeps low byte `0x7f`.
 * [GAP] Non-TN MMA layouts are not systematically tested across all SM120 MMA families.
-* [GAP] Matrix-store behavior remains untested. `stmatrix` / STSM is now a required pre-Phase-3 chapter.
+* [RES] Matrix-store behavior for tested m8n8 b16 forms is covered by Chapter 22.
 
 ### Canonical tensor-core tile pattern
 
 ```text
-LDGSTS tile[N+1]                    [OBS] chapter 18, optional for pipelined kernels
-LDGDEPBAR / DEPBAR.LE SB0, N         [OBS] chapter 18
-BAR.SYNC                             [OBS] chapter 18
-LDSM B fragment                      [OBS] chapters 17, 18
-LDSM A fragment                      [OBS] chapters 17, 18
-HMMA / QMMA / OMMA / sparse variant   [OBS] chapters 13, 14, 16, 19
-accumulator chain via D == C          [OBS] chapters 13, 14, 16, 19
-STG epilogue                          [OBS] chapters 13, 14, 16, 19
+LDGSTS tile[N+1]                     [OBS] chapters 18, 24, optional for pipelined kernels
+LDGDEPBAR / DEPBAR.LE SB0, N         [OBS] chapters 18, 24
+BAR.SYNC                             [OBS] chapters 18, 24
+LDSM B fragment                      [OBS] chapters 17, 18, 24
+LDSM A fragment                      [OBS] chapters 17, 18, 24
+HMMA / QMMA / OMMA / sparse variant  [OBS] chapters 13, 14, 16, 19, 24
+accumulator chain via D == C         [OBS] chapters 13, 14, 16, 19, 24
+STSM optional shared epilogue        [OBS] chapters 22, 24
+STG / REDG epilogue                  [OBS] chapter 24
 ```
 
-* [OBS] Chapters 17 and 18 show ptxas emits LDSM B before LDSM A in tested tensor-core tiles.
+* [OBS] Chapters 17, 18, and 24 show ptxas emits LDSM B before LDSM A in tested tensor-core tiles.
 * [OBS] Chapters 13, 14, 16, and 19 show chained MMA forms colocate D and C registers after the first MMA in the chain.
-* [GAP] The store-back side of matrix fragments through `stmatrix` is not covered by the chapters completed so far.
+* [OBS] Chapter 22 adds the tested matrix-store side through `STSM.16.M[T]88[.2|.4]`.
+* [OBS] Chapter 24 adds a first-pass full production-like pipeline fixture with async copy, LDSM, MMA, optional STSM, STG, and reduction.
+* [OBS] Chapter 25 adds isolated STSM epilogue/storeback probes, including narrowing conversions, shared reload, STG storeback, and fallback comparison.
+* [GAP] Full lane-to-value semantic decode for STSM remains open over the captured runtime output words.
 
 ### Arithmetic operator compilation rules
 
@@ -1878,6 +2062,8 @@ STG epilogue                          [OBS] chapters 13, 14, 16, 19
 | [OBS] `mma.sp::ordered_metadata...kind::mxf8f6f4.block_scale...` | [OBS] `QMMA.SF.SP.16864.<acc>.<A>.<B>.<scale>` |
 | [OBS] `mma.sp::ordered_metadata...kind::mxf4nvf4.block_scale...` | [OBS] `OMMA.SF.SP.168128.<acc>.<A>.<B>.<scale>[.<scale_vec>]` |
 | [OBS] `ldmatrix.sync.aligned.x{1,2,4}.shared.b16` | [OBS] `LDSM.16.M88[.N]` |
+| [OBS] `stmatrix.sync.aligned.x{1,2,4}.m8n8.shared.b16` | [OBS] `STSM.16.M88[.2|.4]` |
+| [OBS] `stmatrix.sync.aligned.x{1,2,4}.trans.m8n8.shared.b16` | [OBS] `STSM.16.MT88[.2|.4]` |
 
 ### Cost rules established so far
 
@@ -1885,7 +2071,8 @@ STG epilogue                          [OBS] chapters 13, 14, 16, 19
 * [RES] QMMA.16832.F32 serial dependency-chain latency is approximately 35 cycles per MMA on SM120.
 * [RES] OMMA.SF.16864.F32 serial dependency-chain latency is approximately 29 cycles per MMA on SM120.
 * [RES] LDSM serial latency is approximately 33 cycles on SM120.
-* [GAP] Sparse QMMA/OMMA serial latency is not measured because runtime timing is blocked by the unavailable driver.
+* [GAP] STSM latency is not measured.
+* [GAP] Sparse QMMA/OMMA serial latency is not measured.
 * [GAP] Scale factor value effects are not measured beyond unity-scale probes.
 * [GAP] Sparse metadata load overhead at runtime is not measured.
 
@@ -1895,7 +2082,9 @@ STG epilogue                          [OBS] chapters 13, 14, 16, 19
 * [OBS] `QMMA.16832` identifies dense `kind::f8f6f4` non-scaled MMA on SM120.
 * [OBS] `.SF` on QMMA or OMMA identifies block scaling on SM120.
 * [OBS] `.SP` on QMMA or OMMA identifies sparse `mma.sp::ordered_metadata` on SM120.
+* [OBS] For tested Chapter 23 forms, FP4/FP6 A and B dtypes are explicit in the `QMMA`, `QMMA.SF`, `OMMA.SF`, and `QMMA.SF.SP` mnemonics.
 * [OBS] `LDSM` identifies matrix-fragment loads from shared memory.
+* [OBS] `STSM` identifies matrix-fragment stores to shared memory.
 * [OBS] `LDGSTS` plus `LDGDEPBAR` plus `DEPBAR.LE SB0, N` identifies cp.async staging.
 
 ## Opcode operand semantics
@@ -1905,18 +2094,21 @@ STG epilogue                          [OBS] chapters 13, 14, 16, 19
 * [OBS] Sparse non-scaled QMMA adds metadata register and selector immediate after C.
 * [OBS] Sparse block-scaled QMMA/OMMA operand order after C is metadata register, scale register, `URZ`, selector immediate.
 * [OBS] LDSM operand order is destination register base and shared-memory address operand.
-* [GAP] STSM operand semantics are not observed.
+* [OBS] STSM operand order is shared-memory address operand followed by source register base for the tested m8n8 b16 forms.
+* [GAP] Full lane-to-shared layout semantics for STSM are not runtime-validated.
 
 ## Global diagnostic workflow for tensor-core dumps
 
 * [OBS] Grep for `HMMA`, `QMMA`, `OMMA`, `QMMA.SP`, `QMMA.SF.SP`, and `OMMA.SF.SP` to locate tensor-core compute.
 * [OBS] Grep for `LDSM` to locate shared-memory fragment loading.
+* [OBS] Grep for `STSM` to locate shared-memory fragment stores.
 * [OBS] Grep for `LDGSTS`, `LDGDEPBAR`, and `DEPBAR.LE` to locate cp.async staging.
 * [OBS] Read shape and dtype directly from the MMA mnemonic for observed SM120 tensor-core families.
 * [OBS] Check accumulator chaining by looking for D and C register colocation across consecutive MMAs.
 * [OBS] Check block scaling by looking for `.SF` and post-C scale operands.
 * [OBS] Check sparse MMA by looking for `.SP`, metadata register operand, and selector immediate.
-* [GAP] Grep for `STSM` / `stmatrix` remains provisional because matrix-store SASS has not been studied yet.
+* [OBS] For FP4/FP6 layout audits, distinguish LDSM-fed fragments from direct-register fragments before making lane-layout claims.
+* [RES] Grep for `STSM` is now a valid first-pass matrix-store locator for tested m8n8 b16 SM120 SASS.
 
 ## Cross chapter summary
 
@@ -1935,7 +2127,7 @@ STG epilogue                          [OBS] chapters 13, 14, 16, 19
 | FP64 | DADD (first observed in kernel 08f), DMUL (observed in kernel 11g) |
 | VOTE | VOTE.ANY, VOTE.ALL |
 | REDUX | REDUX, REDUX.OR, REDUX.XOR, REDUX.SUM, REDUX.MIN, REDUX.MAX |
-| TC | HMMA, QMMA, OMMA, QMMA.SP, QMMA.SF.SP, OMMA.SF.SP, LDSM, LDGSTS, LDGDEPBAR, DEPBAR.LE |
+| TC | HMMA, QMMA, QMMA.SF, OMMA.SF, QMMA.SP, QMMA.SF.SP, OMMA.SF.SP, LDSM, STSM, LDGSTS, LDGDEPBAR, DEPBAR.LE |
 
 ### Architectural invariants
 
@@ -2694,11 +2886,17 @@ During an attempt to audit a production fused FP4 attention kernel on SM120, sev
 
 * [RES] Chapter 20 is complete for control flow, loops, unroll behavior, back-edge detection, and local predication vs branching. It closes the minimal-loop portion of GAP-audit-1, resolves tested loop-detection cases in GAP-audit-2, and partially resolves GAP-audit-4 and GAP-audit-5.
 * [RES] Chapter 21 is complete for first-pass divergence and reconvergence coverage, including BSSY/BSYNC, warp-divergent branches, predicated arithmetic, predicated exits, VOTE, SHFL, local CALL, and guarded HMMA/WARPSYNC.ALL.
-* [GAP] Chapter 22 is still required before Phase 3 for stmatrix / matrix store. It is expected to close the matrix-store gap left by chapters 17 and 18.
-* [GAP] Chapter 23 is strongly recommended before Phase 3 for FP4 / FP6 fragment layout. It is expected to close GAP-14d-1 and the FP6/FP4 packing gaps from chapter 15 if runtime validation becomes available.
-* [GAP] Chapter 24 is strongly recommended before Phase 3 for production mini-GEMM audit using LDGSTS + LDSM + QMMA/OMMA + STG end-to-end. It is expected to reduce GAP-audit-6 and GAP-audit-7 before pattern formalization.
+* [RES] Chapter 22 is complete for first-pass stmatrix / matrix-store SASS coverage and runtime smoke execution. It closes the matrix-store gap left by chapters 17 and 18 for tested m8n8 b16 forms.
+* [GAP] Chapter 22 full STSM lane-to-shared layout decode remains open.
+* [RES] Chapter 23 is complete for first-pass FP4 / FP6 fragment-layout SASS coverage and runtime smoke execution, including dense QMMA, LDSM-fed QMMA, direct-register QMMA, scale-vector OMMA, and sparse metadata separation.
+* [GAP] Chapter 23 full runtime value-layout decode remains open; GAP-14d-1 and the FP6/FP4 packing gaps from Chapter 15 are reduced but not fully closed.
+* [RES] Chapter 24 is complete for first-pass production mini-GEMM SASS coverage and runtime smoke execution, including LDGSTS, LDSM, HMMA/QMMA/OMMA, sparse MMA, STSM, STG, REDG, scale-load, metadata-load, and cold-path probes. It reduces GAP-audit-6 by documenting an end-to-end dump segmentation workflow.
+* [GAP] Chapter 24 does not fully close GAP-audit-7 because audit-confidence scoring still needs a written framework beyond the structural probe set.
+* [RES] Chapter 25 is complete for first-pass STSM epilogue/storeback SASS coverage and runtime smoke execution, including STSM layout variants, STS fallback, MMA-to-STSM paths, F16/BF16 narrowing, barrier/no-barrier contrast, split accumulator storeback, noncontiguous global stores, and register-pressure behavior.
+* [GAP] Chapter 25 full lane-to-value STSM semantic decode remains open over the captured runtime words.
 
 ### Decision: Phase 3 gated
 
-* [RES] Phase 3 must not start until remaining required Chapter 22 is complete.
-* [INF] Chapters 23 and 24 are strongly recommended before Phase 3 because fragment layout and an end-to-end production-like audit reduce the risk of formalizing incomplete patterns.
+* [RES] Required Phase 3 gates from Chapters 20, 21, and 22 are complete.
+* [RES] The strongly recommended Chapter 23, 24, and 25 structural chapters are complete for first-pass SASS coverage and runtime smoke execution.
+* [INF] An audit confidence framework remains strongly recommended before Phase 3 pattern formalization because the structural chapters do not define how to score confidence for production-kernel conclusions.

@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SASS King logo</title>
+  <desc id="desc">A circuit-board crown in emerald and gold.</desc>
+  <defs>
+    <linearGradient id="emerald" x1="170" y1="130" x2="850" y2="920" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0e8a62"/>
+      <stop offset="0.52" stop-color="#075843"/>
+      <stop offset="1" stop-color="#01332f"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="220" y1="160" x2="790" y2="860" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff1a8"/>
+      <stop offset="0.45" stop-color="#f4c95d"/>
+      <stop offset="1" stop-color="#c9972d"/>
+    </linearGradient>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="24" stdDeviation="22" flood-color="#001b17" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="92" fill="#07100f"/>
+  <g opacity="0.16">
+    <path d="M0 128h1024M0 256h1024M0 384h1024M0 512h1024M0 640h1024M0 768h1024M0 896h1024M128 0v1024M256 0v1024M384 0v1024M512 0v1024M640 0v1024M768 0v1024M896 0v1024" stroke="#7b8a83" stroke-width="2"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <path fill="url(#emerald)" d="M210 808V580L99 299l219 171 85-206 109 164 109-164 85 206 219-171-111 281v228c-189 63-415 63-604 0Z"/>
+    <path fill="#0b473c" d="M210 808h604v-62c-196 36-408 36-604 0v62Z" opacity="0.72"/>
+    <path fill="#0b6d55" d="M512 133 645 389 512 566 379 389 512 133Z"/>
+    <path fill="#0f785b" d="m143 363 174 136 74 187H244L143 363Zm738 0L707 499l-74 187h147l101-323Z"/>
+    <path fill="#0d654f" d="m408 314 87 132-87 116-75-90 75-158Zm208 0-87 132 87 116 75-90-75-158Z"/>
+  </g>
+
+  <g fill="none" stroke="url(#gold)" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M512 184v272M512 456l-74 119M512 456l74 119M438 575h148M438 575l74 91 74-91" stroke-width="24"/>
+    <path d="m222 409 174 142M202 721c190-47 429-47 620 0M802 409 628 551" stroke-width="22"/>
+    <path d="M308 623v-70l-36-36M716 623v-70l36-36M264 664h78M682 664h78" stroke-width="18"/>
+    <path d="M330 738h150v58H330v-58Zm214 0h150v58H544v-58Z" stroke-width="16"/>
+    <path d="M512 666v72M512 796v66M468 862v-66M556 862v-66" stroke-width="14"/>
+    <path d="M246 758h52M726 758h52M246 798h52M726 798h52" stroke-width="12"/>
+  </g>
+
+  <g fill="none" stroke="#54c885" stroke-linecap="round" stroke-linejoin="round" opacity="0.88">
+    <path d="M325 487 365 377l68 82 44-8M699 487 659 377l-68 82-44-8" stroke-width="14"/>
+    <path d="M292 537v86l45 45M732 537v86l-45 45M396 492v90M628 492v90" stroke-width="12"/>
+    <path d="M444 812h-82l-58-38M580 812h82l58-38" stroke-width="10"/>
+    <path d="M452 356v96M572 356v96M410 718v-46h52M614 718v-46h-52" stroke-width="10"/>
+  </g>
+
+  <g fill="url(#gold)">
+    <circle cx="292" cy="536" r="14"/>
+    <circle cx="732" cy="536" r="14"/>
+    <circle cx="396" cy="492" r="12"/>
+    <circle cx="628" cy="492" r="12"/>
+    <circle cx="512" cy="864" r="12"/>
+    <circle cx="468" cy="864" r="10"/>
+    <circle cx="556" cy="864" r="10"/>
+    <circle cx="304" cy="774" r="10"/>
+    <circle cx="720" cy="774" r="10"/>
+  </g>
+</svg>

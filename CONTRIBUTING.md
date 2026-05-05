@@ -73,7 +73,7 @@ Branch naming:
 
 ## Style
 
-Technical content is written in English. Conclusions follow the structure of existing chapter conclusions: source, SASS section by section, observations, hypotheses, open questions. Cross-reference `FINDINGS.md`, `CONTROL_CODES.md`, and `OPCODE_MODIFIERS.md` when discussing patterns already covered there.
+Technical content is written in English. Conclusions follow the structure of existing chapter conclusions: source, SASS section by section, observations, hypotheses, open questions. Cross-reference `knowledge/FINDINGS.md`, `knowledge/SASS_INSTRUCTIONS_SM120.md`, and `knowledge/encoding/` when discussing patterns already covered there.
 
 ## PR workflow
 
