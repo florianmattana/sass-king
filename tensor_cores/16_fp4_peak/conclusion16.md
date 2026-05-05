@@ -69,7 +69,7 @@ The mnemonic is structurally identical to QMMA.SF, with two changes:
 * Shape is `.16864` (k=64) instead of `.16832`
 * Low byte of opcode is `0x7f` instead of `0x7a` — this is a distinct opcode family, not a modifier of QMMA
 
-`OMMA` is a new SASS opcode family introduced on Blackwell (presumably "O" for "Octal" since FP4 packs 8 values per uint32, or for the doubled k dimension). Distinct from QMMA at the opcode bytes level.
+`OMMA` is a new SASS opcode family introduced on Blackwell. [HYP] The "O" may refer to "Octal" because FP4 packs 8 values per uint32, or to the doubled K dimension. [OBS] The family is distinct from QMMA at the opcode-byte level.
 
 Operand layout identical to QMMA.SF (same 7 operands). Scale handling is the same.
 
@@ -181,7 +181,7 @@ Consistent with the scoreboard-wait mechanism decoded in earlier chapters.
 
 ## Patterns cristallized
 
-* [OBS] **OMMA is a distinct SASS opcode family** with low byte 0x7f, introduced on Blackwell for the `kind::mxf4nvf4` path. Shape always m16n8k64, always block-scaled.
+* [OBS] **OMMA is a distinct SASS opcode family** with low byte 0x7f, introduced on Blackwell for the tested `kind::mxf4nvf4` path. The tested dense OMMA forms are m16n8k64 and block-scaled.
 * [OBS] **Mnemonic convention for block-scaled MMA**: default scale_vec (1X for QMMA, 2X for OMMA) is silent; deviations are tagged explicitly (`.4X`). Scale dtype ue8m0 abbreviates to `.E8`; ue4m3 written fully.
 * [OBS] **Byte 2 of control code encodes the scaling mode** (scale_vec × scale_dtype combination) for block-scaled MMA. Opcode bytes do not change between scale_vec::2X and scale_vec::4X with different dtypes.
 * [OBS] **OMMA chain latency ~29 cycles/MMA**, lower than HMMA and QMMA (~35). Blackwell tensor cores are optimized for FP4: larger shape + lower latency = 4.8× more FLOPs per cycle than HMMA.
