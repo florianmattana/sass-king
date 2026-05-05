@@ -172,7 +172,7 @@ Linear regression on incremental costs:
 
 Marginal cost per QMMA (~35 cycles) is **identical to HMMA.16816.F32** measured in chapter 13e. This is striking because QMMA m16n8k32 performs **2× more FMAs internally** than HMMA m16n8k16 (k=32 vs k=16), yet completes in the same serial latency. Effective FMA throughput per cycle is 2× higher for FP8 QMMA than for FP16 HMMA, consistent with Blackwell consumer FP8 throughput specs.
 
-Fixed chain overhead is ~510 for QMMA vs ~310 for HMMA. The +200 cycles likely reflect a deeper pipeline startup for the FP8 MAC units. This overhead is amortized in production GEMM (N >> 100).
+Fixed chain overhead is ~510 for QMMA vs ~310 for HMMA. [HYP] The +200 cycles may reflect a deeper pipeline startup for the FP8 MAC units. [INF] This overhead is amortized in production GEMM when N is much larger than the latency-probe chain sizes.
 
 ## MMA-family wide invariants
 

@@ -4,8 +4,10 @@ Running log of observations and hypotheses, organized by kernel chapter.
 
 Notation:
 * **[OBS]** verified observation from a SASS dump
+* **[INF]** inference from one or more observations; the evidence chain must be stated
 * **[HYP]** open hypothesis, to be tested
 * **[RES]** resolved hypothesis (rejected or confirmed)
+* **[GAP]** open question not answered by the current evidence
 
 ---
 
@@ -13,7 +15,7 @@ Notation:
 
 ### Observations
 
-* [OBS] Every kernel has a 6 section prologue: stack pointer init, thread and block ID setup, argument loads, index computation, bounds check, global descriptor load.
+* [OBS] The observed elementwise baseline kernels use a 6 section prologue: stack pointer init, thread and block ID setup, argument loads, index computation, bounds check, global descriptor load.
 * [OBS] `R1` is the stack pointer by ABI convention, loaded from `c[0x0][0x37c]`, initialized even when no spilling occurs.
 * [OBS] Kernel arguments and launch parameters live in constant memory bank 0 at fixed offsets (`c[0x0][...]`).
 * [OBS] `LDC` loads into a per thread register, `LDCU` into a uniform register. ptxas classifies automatically based on data flow.
@@ -21,7 +23,8 @@ Notation:
 * [OBS] Values shared across the warp (blockIdx, kernel args, n) go into UR. Values unique per thread (threadIdx, computed indices, loaded data) go into R.
 * [OBS] Global memory accesses on SM120 use descriptor based addressing: `desc[UR][R.64]`. The descriptor is loaded once from `c[0x0][0x358]` and shared across all global accesses.
 * [OBS] `IMAD.WIDE` produces a 64 bit result (register pair) from a 32 bit multiply. Used for pointer arithmetic.
-* [OBS] Bounds check uses predication (`@P0 EXIT`), not a branch. Zero divergence cost.
+* [OBS] Bounds check uses predication (`@P0 EXIT`), not an explicit branch-around-body sequence.
+* [INF] The predicated early-exit form avoids an additional taken branch in the visible SASS control-flow graph; runtime divergence cost is not measured in kernel 01.
 * [OBS] Each independent pointer load gets its own scoreboard, allowing dependent address computations to proceed independently.
 * [OBS] Co-consumed loads share a single scoreboard. Two LDGs feeding one FADD both go on SB4, one wait covers both.
 * [OBS] ptxas interleaves IMAD.WIDE (address computation) with LDG (memory load) so that multiple global loads are in flight simultaneously.
@@ -254,7 +257,9 @@ Chapter focused on isolating the meaning of the `UMOV UR4, 0x400` instruction ca
 
 ### Resolved hypotheses
 
-* [RES] `UMOV UR4, 0x400` appears if and only if the kernel uses shared memory. The value 0x400 is inert across shared size, shared type, static vs dynamic declaration, and number of shared buffers. **It is an architectural constant tied to the shared addressing mechanism on SM120.** Exact semantic meaning of the value itself is still unknown.
+* [RES] `UMOV UR4, 0x400` appears in every tested SM120 shared-memory variant and is absent from the no-shared control. The value 0x400 is inert across shared size, shared type, static vs dynamic declaration, and number of shared buffers in the tested corpus.
+* [INF] The tested deltas constrain `0x400` to the shared addressing mechanism rather than source-level shared size, block size, type, or static/dynamic declaration.
+* [GAP] Exact semantic meaning of the `0x400` value remains unknown.
 * [RES] Predication is systematically used for short conditional bodies inside a kernel, not only for bounds check exits. Variant 07a confirms ptxas prefixes individual instructions with `@!P0` rather than branching around a 4-instruction body.
 
 ### Open hypotheses
@@ -877,7 +882,7 @@ Matches CUTLASS atoms from `include/cute/arch/mma_sm80.hpp`:
 ### The .reuse modifier on MMA operands
 * [OBS] **`.reuse` appears on the B operand of every HMMA in a chain except the last one.** Example from 13d: `HMMA.16816.F32 R16, R12, R10.reuse, R16` (HMMA1), `HMMA.16816.F32 R16, R12, R10, R16` (HMMA2, last in chain).
 * [OBS] `.reuse` is not emitted on A even though A is also re-read by subsequent HMMAs. [HYP] The reuse cache may prioritize smaller operands (B is 2 registers, A is 4 registers) or the cache is positional and only the B slot is enabled for MMA.
-* [OBS] `.reuse` is not emitted on C either, probably because C is already colocated with D in the chaining case (different form of reuse at the register file level).
+* [OBS] `.reuse` is not emitted on C in the observed HMMA chain. [HYP] This may be because C is already colocated with D in the chaining case, which is a different form of reuse at the register file level.
 ### The NOP pad pattern
 * [OBS] **The semantic NOP `@!UPT UIADD3 URZ, UPT, UPT, URZ, URZ, URZ` has predicate `@!UPT` which is always false (UPT is always true, `!UPT` is always false), all operands are URZ, destination is URZ. The instruction has no observable effect.**
 * [OBS] ptxas emits **2 NOPs after each HMMA** in variants 13a, 13b, 13c, 13d when the HMMA's D register is consumed by a subsequent dependent instruction (either another HMMA via D→C chain, or a STG).
@@ -1434,7 +1439,7 @@ Chapter establishing the LDSM SASS opcode family — the realization of `ldmatri
   ```
 * [OBS] **No NOPs anywhere in the chain**. Scoreboard handles all dependencies.
 * [OBS] **ptxas register renaming**: LDSM destinations alternate across ~8 registers (R3, R5, R2, R7, R6, R9, R8) instead of overwriting. Allows maximum ILP potential.
-* [OBS] **First LDSM carries a wait bit** (byte 24-31 = `0x08`) likely for BAR.SYNC sync. Subsequent LDSMs rely on register dependency through IADD and don't need it.
+* [OBS] **First LDSM carries a wait bit** (byte 24-31 = `0x08`). [HYP] The bit may be related to the preceding BAR.SYNC synchronization. [OBS] Subsequent LDSMs in the chain omit that explicit wait bit and rely on the register dependency through IADD.
 * [OBS] **Register pressure minimal**: 8 registers suffice for N=16 LDSMs in chain.
 ### Implications for production pipelining
 * [HYP] In a GEMM k-loop, the typical latency chain per tile is:
@@ -1571,7 +1576,7 @@ Chapter establishing the production GEMM pipeline pattern on SM120 via cp.async.
 * [RES] ptxas software-pipelines LDSM and MMA when dependencies allow
 * [RES] `#pragma unroll 1` produces a real SASS loop with BRA back-edge
 * [RES] 3-stage pipeline uses DEPBAR.LE with N = 2, 1, 0 successively
-* [RES] ptxas always emits LDSM.x2 before LDSM.x4 in MMA-consuming context
+* [RES] ptxas emits LDSM.x2 before LDSM.x4 in the tested MMA-consuming contexts (17e, 18a, 18b, 18c).
 ### Open gaps
 * [GAP-18-1] `@!PT LDS RZ, [RZ]` triplet role before LDGSTS not decoded.
 * [GAP] Scoreboard banks other than SB0 not observed (SB1, SB2, etc. may be used by TMA on SM90+ or tcgen05 on SM100+).
@@ -1592,7 +1597,7 @@ Chapter establishing the production GEMM pipeline pattern on SM120 via cp.async.
 * `SB0` on DEPBAR.LE: scoreboard bank 0 (cp.async dedicated bank)
 * `.LE` on DEPBAR: less-or-equal comparison mode for wait count
 ### Toolkit completion after chapter 18
-With chapters 13 (HMMA), 14 (QMMA), 17 (LDSM), and 18 (cp.async pipeline), the repo has decoded every opcode needed to audit a production GEMM or attention kernel on SM120:
+With chapters 13 (HMMA), 14 (QMMA), 17 (LDSM), and 18 (cp.async pipeline), the repo has decoded the core observed opcodes needed for SM120 GEMM-style audits:
 | Pattern | Opcode | Chapter |
 |---|---|---|
 | Global load | LDG.E.* | 08 |

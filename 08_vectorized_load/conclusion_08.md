@@ -99,7 +99,7 @@ This observation holds across all variants and across kernels 01 to 08.
 
 ### 4. Alignment of the source type determines usable load width
 
-Variant 08f used the deprecated `double4` (which has 16-byte alignment by default) and produced 4 × LDG.E.128 instead of 2 × LDG.E.ENL2.256, despite matching the 32-byte size of float8. Variant 08g used `double4_32a` (explicit 32-byte alignment) and produced the expected 1 × LDG.E.ENL2.256.
+Variant 08f used the deprecated `double4` (which has 16-byte alignment by default) and produced 4 × LDG.E.128 instead of 2 × LDG.E.ENL2.256, despite matching the 32-byte size of float8. Variant 08g used `double4_32a` (explicit 32-byte alignment) and produced one LDG.E.ENL2.256 per input array plus one STG.E.ENL2.256 for the output.
 
 Conclusion: the load width is not determined by element type width (32 vs 64 bit) but by the alignment guaranteed by the type. For 256-bit loads, ptxas requires 32-byte alignment. For 128-bit loads, 16-byte alignment.
 
