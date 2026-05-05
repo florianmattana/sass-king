@@ -136,11 +136,11 @@ In kernel 18a (2-stage fully unrolled), ptxas reordered the SASS so that **LDSM 
 0x02d0  HMMA tile 1 (chain)
 ```
 
-This hides the LDSM latency (~33 cycles) behind the HMMA (~35 cycles). Optimization that production hand-written kernels try to achieve manually is already done automatically by ptxas when the source makes the dependencies clear.
+[INF] This schedule can hide the next tile's LDSM latency (~33 cycles from chapter 17) behind the current tile's HMMA latency (~35 cycles from chapter 13). [OBS] In 18a, ptxas performs this reordering when the source dependencies allow it.
 
 ### Observation: ptxas inverts LDSM emission order (A/B)
 
-Consistently across all variants (17e, 18a, 18b, 18c), ptxas emits `LDSM.x2` (B fragment, smaller) **before** `LDSM.x4` (A fragment, larger). Likely to give the larger load more time to complete before the consuming HMMA needs both.
+[OBS] Across the tested MMA-consuming variants (17e, 18a, 18b, 18c), ptxas emits `LDSM.x2` (B fragment, smaller) before `LDSM.x4` (A fragment, larger). [HYP] This may give the larger load more time to complete before the consuming HMMA needs both.
 
 ### Observation: Real K-loop in SASS (from 18b)
 
@@ -212,7 +212,7 @@ Hypothesis: scheduling slots for ptxas to reserve pipeline resources or align th
 | ptxas software-pipelines LDSM and MMA | Confirmed (18a shows LDSM next tile before MMA current tile) |
 | `#pragma unroll 1` produces a real SASS loop | Confirmed (18b has explicit BRA back-edge) |
 | 3-stage pipeline uses DEPBAR.LE N=2, 1, 0 | Confirmed (18c) |
-| ptxas always emits LDSM.x2 before LDSM.x4 | Confirmed across 17e, 18a, 18b, 18c |
+| ptxas emits LDSM.x2 before LDSM.x4 in the tested MMA-consuming variants | Confirmed across 17e, 18a, 18b, 18c |
 
 ## Open gaps
 
@@ -226,7 +226,7 @@ Hypothesis: scheduling slots for ptxas to reserve pipeline resources or align th
 
 ## Toolkit completion
 
-With chapters 13 (HMMA), 14 (QMMA), 17 (LDSM), and 18 (cp.async pipeline), the repo now has decoded every opcode needed to audit a production GEMM or attention kernel on SM120:
+With chapters 13 (HMMA), 14 (QMMA), 17 (LDSM), and 18 (cp.async pipeline), the repo now has decoded the core observed opcodes needed for SM120 GEMM-style audits:
 
 | Pattern | Opcode | Chapter |
 |---|---|---|
@@ -241,7 +241,7 @@ With chapters 13 (HMMA), 14 (QMMA), 17 (LDSM), and 18 (cp.async pipeline), the r
 | Tensor core FP8/FP6/FP4 | `QMMA.16832.<acc>.<A>.<B>` | 14 |
 | Global store | `STG.E.*` | 08 |
 
-Any SM120 GEMM or attention kernel should now be readable end-to-end.
+[INF] SM120 GEMM-style kernels built from the observed LDGSTS + LDSM + HMMA/QMMA + STG pattern should now be readable end-to-end. [GAP] Kernels using unstudied matrix-store, divergence/reconvergence, or unknown production-specific patterns still require Chapters 21-24.
 
 ## Summary
 
