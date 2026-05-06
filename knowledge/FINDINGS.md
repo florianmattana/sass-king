@@ -11,6 +11,32 @@ Notation:
 
 ---
 
+## Audit confidence framework
+
+[OBS] Chapters 20 through 25 show that production-like SASS audits can establish different kinds of evidence: static instruction structure, controlled source-to-SASS causality, runtime smoke execution, numeric correctness, profiling interpretation, and cross-architecture stability.
+
+[INF] Audit conclusions must state the highest confidence level actually reached, because observing a SASS pattern does not by itself prove numeric correctness or performance optimality.
+
+| Level | Name | Evidence required | What it allows |
+|---|---|---|---|
+| C0 | [OBS] Section identified | Kernel regions are segmented in the dump: prologue, body, loop/back-edge if present, epilogue, cold/error paths. | [INF] The audit can name where a pattern appears, but cannot yet claim source causality or correctness. |
+| C1 | [OBS] SASS pattern observed | The exact instruction sequence is visible in SASS with operands, predicates, scoreboards, and control-flow context recorded. | [INF] The audit can claim structural presence of the pattern in that binary. |
+| C2 | [OBS] Controlled variant confirmed | A one-variable source or PTX variation changes the SASS pattern in the predicted localized way. | [INF] The audit can connect a source-level construct or PTX atom to the observed SASS pattern for the tested case. |
+| C3 | [OBS] Runtime smoke executed | The kernel or probe runs on target hardware without launch/runtime failure and reaches the audited path. | [INF] The audit can claim the path is executable for the tested inputs, but not full numeric correctness. |
+| C4 | [OBS] Numeric correctness checked | Outputs are compared against a CPU, CUDA, or independently written reference for representative values, layouts, predicates, and tails. | [INF] The audit can claim correctness for the tested input domain and explicitly named edge cases. |
+| C5 | [OBS] Profile/performance validated | NCU counters, timing, or a focused benchmark confirm the claimed bottleneck, latency, throughput, occupancy, or memory behavior. | [INF] The audit can make performance claims bounded by the measured configuration. |
+| C6 | [OBS] Cross-context confirmed | The same conclusion is reproduced across compiler versions, architecture targets, library kernels, or independent source shapes. | [INF] The audit can promote the pattern from local result to reusable production-audit rule, with remaining scope limits stated. |
+
+[OBS] A single audit may contain conclusions at different levels. For example, Chapter 24 reaches C1/C2 for many production-like SASS structures and C3 for runtime smoke probes, but it does not reach C4 for a full numeric GEMM correctness suite.
+
+[INF] Production-kernel writeups should attach a confidence label to each major conclusion, not only to the whole audit, because source mapping, epilogue correctness, and performance interpretation can have different evidence strength in the same dump.
+
+[RES] GAP-audit-7 is resolved at the methodology level by this framework: audit-level confidence must now be qualified separately from claim-level `[OBS]`, `[INF]`, `[HYP]`, `[RES]`, and `[GAP]` tags.
+
+[GAP] The framework does not replace future production validation. It defines the reporting standard; individual audits still need their own controlled variants, runtime checks, numeric references, and profiles.
+
+---
+
 ## Kernel 01 vector_add (baseline)
 
 ### Observations
@@ -2877,10 +2903,11 @@ During an attempt to audit a production fused FP4 attention kernel on SM120, sev
 * [OBS] Chapters 01-19 document opcodes and patterns in isolation.
 * [GAP] There is no written methodology for auditing a production kernel end-to-end: how to identify kernel sections, how to map C++ source to SASS regions, how to interpret instruction densities, how to validate hypotheses about kernel behavior.
 
-### [GAP-audit-7] No confidence qualification framework
+### [RES-audit-7] Audit confidence qualification framework
 
 * [OBS] During the FP4 attention audit attempt, hypotheses produced were inconsistently confident, and some turned out to be wrong without this being flagged.
-* [GAP] The [OBS]/[HYP]/[RES]/[GAP] tagging is at the claim level, but there is no framework for qualifying confidence at the audit level (e.g. "this audit conclusion depends on N untested assumptions").
+* [RES] The audit confidence framework at the top of this file now separates claim-level tags from audit-level confidence labels C0 through C6.
+* [INF] Future production audits can state whether a conclusion is only structurally observed, controlled-variant confirmed, runtime-smoke executed, numerically checked, profile validated, or cross-context confirmed.
 
 ### Plan to close the gaps
 
@@ -2891,7 +2918,7 @@ During an attempt to audit a production fused FP4 attention kernel on SM120, sev
 * [RES] Chapter 23 is complete for first-pass FP4 / FP6 fragment-layout SASS coverage and runtime smoke execution, including dense QMMA, LDSM-fed QMMA, direct-register QMMA, scale-vector OMMA, and sparse metadata separation.
 * [GAP] Chapter 23 full runtime value-layout decode remains open; GAP-14d-1 and the FP6/FP4 packing gaps from Chapter 15 are reduced but not fully closed.
 * [RES] Chapter 24 is complete for first-pass production mini-GEMM SASS coverage and runtime smoke execution, including LDGSTS, LDSM, HMMA/QMMA/OMMA, sparse MMA, STSM, STG, REDG, scale-load, metadata-load, and cold-path probes. It reduces GAP-audit-6 by documenting an end-to-end dump segmentation workflow.
-* [GAP] Chapter 24 does not fully close GAP-audit-7 because audit-confidence scoring still needs a written framework beyond the structural probe set.
+* [RES] GAP-audit-7 is closed at the reporting-methodology level by the C0-C6 audit confidence framework.
 * [RES] Chapter 25 is complete for first-pass STSM epilogue/storeback SASS coverage and runtime smoke execution, including STSM layout variants, STS fallback, MMA-to-STSM paths, F16/BF16 narrowing, barrier/no-barrier contrast, split accumulator storeback, noncontiguous global stores, and register-pressure behavior.
 * [GAP] Chapter 25 full lane-to-value STSM semantic decode remains open over the captured runtime words.
 
@@ -2899,4 +2926,5 @@ During an attempt to audit a production fused FP4 attention kernel on SM120, sev
 
 * [RES] Required Phase 3 gates from Chapters 20, 21, and 22 are complete.
 * [RES] The strongly recommended Chapter 23, 24, and 25 structural chapters are complete for first-pass SASS coverage and runtime smoke execution.
-* [INF] An audit confidence framework remains strongly recommended before Phase 3 pattern formalization because the structural chapters do not define how to score confidence for production-kernel conclusions.
+* [RES] The audit confidence framework is documented before Phase 3 pattern formalization.
+* [INF] Phase 3 patterns should carry confidence levels when promoted from chapter-local observations into reusable production-audit rules.

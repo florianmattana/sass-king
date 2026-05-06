@@ -57,7 +57,7 @@ Strongly recommended before Phase 3:
 - [x] Chapter 23 - FP4 / FP6 fragment layout
 - [x] Chapter 24 - Production mini-GEMM audit
 - [x] Chapter 25 - STSM epilogue layout and storeback semantics
-- [ ] Audit confidence framework - methodology checklist for qualifying production-kernel conclusions
+- [x] Audit confidence framework - methodology checklist for qualifying production-kernel conclusions
 
 Deferred and non-blocking for Phase 3:
 
@@ -95,7 +95,7 @@ The per-chapter `conclusion{N}.md` files here document the narrative of the chap
 | 24 | **SASS + runtime smoke done** | 24a-24ad (30) | LDGSTS, LDSM, HMMA/QMMA/OMMA, STSM, STG, REDG |
 | 25 | **SASS + runtime smoke done** | 25a-25z (26) | STSM.16.M88/MT88, STS.128, F2F.F16/BF16, MMA-to-STSM, STG |
 
-Chapters 13, 14, 16, 17, 18, and 19 decode the core tensor-core instruction families. Chapter 20 closes the first control-flow gate for loop lowering and back-edge detection. Chapter 21 closes the first divergence/reconvergence gate for the tested lane-divergent patterns. Chapter 22 closes the first matrix-store gate for m8n8 b16 STSM. Chapter 23 closes first-pass FP4/FP6 SASS coverage and runtime smoke execution for fragment-layout probes, with full lane-to-value decode still open. Chapter 24 closes first-pass production-like mini-GEMM SASS coverage and runtime smoke execution, but remains structural rather than a full numeric GEMM correctness suite. Chapter 25 closes first-pass STSM epilogue/storeback SASS coverage and runtime smoke execution. The audit confidence framework remains open so production-kernel conclusions can be qualified explicitly.
+Chapters 13, 14, 16, 17, 18, and 19 decode the core tensor-core instruction families. Chapter 20 closes the first control-flow gate for loop lowering and back-edge detection. Chapter 21 closes the first divergence/reconvergence gate for the tested lane-divergent patterns. Chapter 22 closes the first matrix-store gate for m8n8 b16 STSM. Chapter 23 closes first-pass FP4/FP6 SASS coverage and runtime smoke execution for fragment-layout probes, with full lane-to-value decode still open. Chapter 24 closes first-pass production-like mini-GEMM SASS coverage and runtime smoke execution, but remains structural rather than a full numeric GEMM correctness suite. Chapter 25 closes first-pass STSM epilogue/storeback SASS coverage and runtime smoke execution. The audit confidence framework is now documented in `../knowledge/FINDINGS.md`, so production-kernel conclusions can be qualified by evidence level before Phase 3 pattern formalization.
 
 ## SM120 MMA opcode landscape (after chapter 19)
 
