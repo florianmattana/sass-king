@@ -1,0 +1,107 @@
+
+Fatbin elf code:
+================
+arch = sm_120a
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+	code for sm_120a
+	.target	sm_120a
+
+
+Fatbin elf code:
+================
+arch = sm_120a
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+	code for sm_120a
+	.target	sm_120a
+
+		Function : _Z16mini_gemm_kernelPK5uint4PKjP6float4i
+	.headerflags	@"EF_CUDA_ACCELERATORS EF_CUDA_SM120 EF_CUDA_VIRTUAL_SM(EF_CUDA_SM120)"
+        /*0000*/                   LDC R1, c[0x0][0x37c] ;                            /* 0x0000df00ff017b82 */
+                                                                                      /* 0x000fe20000000800 */
+        /*0010*/                   S2R R11, SR_TID.X ;                                /* 0x00000000000b7919 */
+                                                                                      /* 0x000e2e0000002100 */
+        /*0020*/                   LDC.64 R2, c[0x0][0x390] ;                         /* 0x0000e400ff027b82 */
+                                                                                      /* 0x000e620000000a00 */
+        /*0030*/                   LDCU.64 UR4, c[0x0][0x358] ;                       /* 0x00006b00ff0477ac */
+                                                                                      /* 0x000ea20008000a00 */
+        /*0040*/                   LOP3.LUT R0, R11.reuse, 0x1f, RZ, 0xc0, !PT ;      /* 0x0000001f0b007812 */
+                                                                                      /* 0x041fe200078ec0ff */
+        /*0050*/                   IMAD.WIDE.U32 R2, R11, 0x10, R2 ;                  /* 0x000000100b027825 */
+                                                                                      /* 0x002fc800078e0002 */
+        /*0060*/                   IADD R8, R0.reuse, 0x66666666 ;                    /* 0x6666666600087835 */
+                                                                                      /* 0x040fe200078e0000 */
+        /*0070*/                   IADD R9, R0.reuse, 0x77777777 ;                    /* 0x7777777700097835 */
+                                                                                      /* 0x040fe200078e0000 */
+        /*0080*/                   IADD R4, R0.reuse, 0x22222222 ;                    /* 0x2222222200047835 */
+                                                                                      /* 0x040fe200078e0000 */
+        /*0090*/                   IADD R5, R0.reuse, 0x33333333 ;                    /* 0x3333333300057835 */
+                                                                                      /* 0x040fe200078e0000 */
+        /*00a0*/                   IADD R6, R0.reuse, 0x44444444 ;                    /* 0x4444444400067835 */
+                                                                                      /* 0x040fe200078e0000 */
+        /*00b0*/                   IADD R7, R0, 0x55555555 ;                          /* 0x5555555500077835 */
+                                                                                      /* 0x000fce00078e0000 */
+        /*00c0*/                   QMMA.16832.F32.E4M3.E4M3 R12, R4, R8.reuse, RZ ;   /* 0x00000008040c727a */
+                                                                                      /* 0x080ff60000002cff */
+        /*00d0*/                   @!UPT UIADD3 URZ, UPT, UPT, URZ, URZ, URZ ;        /* 0x000000fffffff290 */
+                                                                                      /* 0x000ff6000fffe0ff */
+        /*00e0*/                   @!UPT UIADD3 URZ, UPT, UPT, URZ, URZ, URZ ;        /* 0x000000fffffff290 */
+                                                                                      /* 0x000fee000fffe0ff */
+        /*00f0*/                   QMMA.16832.F32.E4M3.E4M3 R12, R4, R8.reuse, R12 ;  /* 0x00000008040c727a */
+                                                                                      /* 0x080ff60000002c0c */
+        /*0100*/                   @!UPT UIADD3 URZ, UPT, UPT, URZ, URZ, URZ ;        /* 0x000000fffffff290 */
+                                                                                      /* 0x000ff6000fffe0ff */
+        /*0110*/                   @!UPT UIADD3 URZ, UPT, UPT, URZ, URZ, URZ ;        /* 0x000000fffffff290 */
+                                                                                      /* 0x000fee000fffe0ff */
+        /*0120*/                   QMMA.16832.F32.E4M3.E4M3 R12, R4, R8.reuse, R12 ;  /* 0x00000008040c727a */
+                                                                                      /* 0x080ff60000002c0c */
+        /*0130*/                   @!UPT UIADD3 URZ, UPT, UPT, URZ, URZ, URZ ;        /* 0x000000fffffff290 */
+                                                                                      /* 0x000ff6000fffe0ff */
+        /*0140*/                   @!UPT UIADD3 URZ, UPT, UPT, URZ, URZ, URZ ;        /* 0x000000fffffff290 */
+                                                                                      /* 0x000fee000fffe0ff */
+        /*0150*/                   QMMA.16832.F32.E4M3.E4M3 R12, R4, R8, R12 ;        /* 0x00000008040c727a */
+                                                                                      /* 0x000ff60000002c0c */
+        /*0160*/                   @!UPT UIADD3 URZ, UPT, UPT, URZ, URZ, URZ ;        /* 0x000000fffffff290 */
+                                                                                      /* 0x000ff6000fffe0ff */
+        /*0170*/                   @!UPT UIADD3 URZ, UPT, UPT, URZ, URZ, URZ ;        /* 0x000000fffffff290 */
+                                                                                      /* 0x000fec000fffe0ff */
+        /*0180*/                   STG.E.128 desc[UR4][R2.64], R12 ;                  /* 0x0000000c02007986 */
+                                                                                      /* 0x004fe2000c101d04 */
+        /*0190*/                   EXIT ;                                             /* 0x000000000000794d */
+                                                                                      /* 0x000fea0003800000 */
+        /*01a0*/                   BRA 0x1a0;                                         /* 0xfffffffc00fc7947 */
+                                                                                      /* 0x000fc0000383ffff */
+        /*01b0*/                   NOP;                                               /* 0x0000000000007918 */
+                                                                                      /* 0x000fc00000000000 */
+        /*01c0*/                   NOP;                                               /* 0x0000000000007918 */
+                                                                                      /* 0x000fc00000000000 */
+        /*01d0*/                   NOP;                                               /* 0x0000000000007918 */
+                                                                                      /* 0x000fc00000000000 */
+        /*01e0*/                   NOP;                                               /* 0x0000000000007918 */
+                                                                                      /* 0x000fc00000000000 */
+        /*01f0*/                   NOP;                                               /* 0x0000000000007918 */
+                                                                                      /* 0x000fc00000000000 */
+        /*0200*/                   NOP;                                               /* 0x0000000000007918 */
+                                                                                      /* 0x000fc00000000000 */
+        /*0210*/                   NOP;                                               /* 0x0000000000007918 */
+                                                                                      /* 0x000fc00000000000 */
+        /*0220*/                   NOP;                                               /* 0x0000000000007918 */
+                                                                                      /* 0x000fc00000000000 */
+        /*0230*/                   NOP;                                               /* 0x0000000000007918 */
+                                                                                      /* 0x000fc00000000000 */
+        /*0240*/                   NOP;                                               /* 0x0000000000007918 */
+                                                                                      /* 0x000fc00000000000 */
+        /*0250*/                   NOP;                                               /* 0x0000000000007918 */
+                                                                                      /* 0x000fc00000000000 */
+        /*0260*/                   NOP;                                               /* 0x0000000000007918 */
+                                                                                      /* 0x000fc00000000000 */
+        /*0270*/                   NOP;                                               /* 0x0000000000007918 */
+                                                                                      /* 0x000fc00000000000 */
+		..........
+
+

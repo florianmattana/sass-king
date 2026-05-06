@@ -1,0 +1,59 @@
+
+Fatbin elf code:
+================
+arch = sm_120a
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+	code for sm_120a
+	.target	sm_120a
+
+
+Fatbin elf code:
+================
+arch = sm_120a
+code version = [1,8]
+host = linux
+compile_size = 64bit
+
+	code for sm_120a
+	.target	sm_120a
+
+		Function : _Z16mini_gemm_kernelPK5uint4PKjP6float4i
+	.headerflags	@"EF_CUDA_ACCELERATORS EF_CUDA_SM120 EF_CUDA_VIRTUAL_SM(EF_CUDA_SM120)"
+        /*0000*/                   LDC R1, c[0x0][0x37c] ;           /* 0x0000df00ff017b82 */
+                                                                     /* 0x000fe20000000800 */
+        /*0010*/                   S2R R5, SR_TID.X ;                /* 0x0000000000057919 */
+                                                                     /* 0x000e2e0000002100 */
+        /*0020*/                   LDC.64 R2, c[0x0][0x390] ;        /* 0x0000e400ff027b82 */
+                                                                     /* 0x000e220000000a00 */
+        /*0030*/                   LDCU.64 UR4, c[0x0][0x358] ;      /* 0x00006b00ff0477ac */
+                                                                     /* 0x000e620008000a00 */
+        /*0040*/                   IMAD.WIDE.U32 R2, R5, 0x10, R2 ;  /* 0x0000001005027825 */
+                                                                     /* 0x001fca00078e0002 */
+        /*0050*/                   STG.E.128 desc[UR4][R2.64], RZ ;  /* 0x000000ff02007986 */
+                                                                     /* 0x002fe2000c101d04 */
+        /*0060*/                   EXIT ;                            /* 0x000000000000794d */
+                                                                     /* 0x000fea0003800000 */
+        /*0070*/                   BRA 0x70;                         /* 0xfffffffc00fc7947 */
+                                                                     /* 0x000fc0000383ffff */
+        /*0080*/                   NOP;                              /* 0x0000000000007918 */
+                                                                     /* 0x000fc00000000000 */
+        /*0090*/                   NOP;                              /* 0x0000000000007918 */
+                                                                     /* 0x000fc00000000000 */
+        /*00a0*/                   NOP;                              /* 0x0000000000007918 */
+                                                                     /* 0x000fc00000000000 */
+        /*00b0*/                   NOP;                              /* 0x0000000000007918 */
+                                                                     /* 0x000fc00000000000 */
+        /*00c0*/                   NOP;                              /* 0x0000000000007918 */
+                                                                     /* 0x000fc00000000000 */
+        /*00d0*/                   NOP;                              /* 0x0000000000007918 */
+                                                                     /* 0x000fc00000000000 */
+        /*00e0*/                   NOP;                              /* 0x0000000000007918 */
+                                                                     /* 0x000fc00000000000 */
+        /*00f0*/                   NOP;                              /* 0x0000000000007918 */
+                                                                     /* 0x000fc00000000000 */
+		..........
+
+
