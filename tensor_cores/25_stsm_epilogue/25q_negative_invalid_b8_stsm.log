@@ -1,0 +1,37 @@
+25_stsm_epilogue.cu(158): warning #177-D: variable "meta" was declared but never referenced
+      uint32_t meta = 0xaaaaaaaau ^ static_cast<uint32_t>(lane);
+               ^
+
+Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+25_stsm_epilogue.cu(159): warning #177-D: variable "sfa" was declared but never referenced
+      uint32_t sfa = 0x38383838u;
+               ^
+
+25_stsm_epilogue.cu(160): warning #177-D: variable "sfb" was declared but never referenced
+      uint32_t sfb = 0x38383838u;
+               ^
+
+25_stsm_epilogue.cu(170): warning #177-D: variable "d0" was declared but never referenced
+      float d0 = static_cast<float>(lane) + 1.0f;
+            ^
+
+25_stsm_epilogue.cu(171): warning #177-D: variable "d1" was declared but never referenced
+      float d1 = static_cast<float>(lane) + 2.0f;
+            ^
+
+25_stsm_epilogue.cu(172): warning #177-D: variable "d2" was declared but never referenced
+      float d2 = static_cast<float>(lane) + 3.0f;
+            ^
+
+25_stsm_epilogue.cu(173): warning #177-D: variable "d3" was declared but never referenced
+      float d3 = static_cast<float>(lane) + 4.0f;
+            ^
+
+ptxas /tmp/tmpxft_000002fa_00000000-6_25_stsm_epilogue.ptx, line 76; error   : Feature '.m16n8' not supported on .target 'sm_120'
+ptxas /tmp/tmpxft_000002fa_00000000-6_25_stsm_epilogue.ptx, line 76; error   : Feature 'stmatrix.b8' not supported on .target 'sm_120'
+ptxas /tmp/tmpxft_000002fa_00000000-6_25_stsm_epilogue.ptx, line 80; error   : Feature '.m16n8' not supported on .target 'sm_120'
+ptxas /tmp/tmpxft_000002fa_00000000-6_25_stsm_epilogue.ptx, line 80; error   : Feature 'stmatrix.b8' not supported on .target 'sm_120'
+ptxas /tmp/tmpxft_000002fa_00000000-6_25_stsm_epilogue.ptx, line 84; error   : Feature '.m16n8' not supported on .target 'sm_120'
+ptxas /tmp/tmpxft_000002fa_00000000-6_25_stsm_epilogue.ptx, line 84; error   : Feature 'stmatrix.b8' not supported on .target 'sm_120'
+ptxas fatal   : Ptx assembly aborted due to errors

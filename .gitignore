@@ -2,3 +2,9 @@
 DECISIONS.md
 AUDIT.md
 ATOMS_CATALOG.md
+
+# Generated local build artifacts
+tensor_cores/22_stmatrix/build/
+tensor_cores/23_fragment_layout/build/
+tensor_cores/24_production_mini_gemm/build/
+tensor_cores/25_stsm_epilogue/build/

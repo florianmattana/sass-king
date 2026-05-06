@@ -1,0 +1,2 @@
+ptxas /tmp/tmpxft_000003e5_00000000-6_23_fragment_layout.ptx, line 74; error   : Unexpected instruction types specified for 'mma'
+ptxas fatal   : Ptx assembly aborted due to errors
