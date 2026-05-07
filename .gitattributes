@@ -1,0 +1,6 @@
+*.sass linguist-language=CUDA
+*.cu linguist-language=CUDA
+*.cuh linguist-language=CUDA
+*.md linguist-documentation
+*.csv linguist-data
+*.cubin binary
