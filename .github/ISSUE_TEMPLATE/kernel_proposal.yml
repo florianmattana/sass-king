@@ -13,7 +13,7 @@ body:
     attributes:
       label: Previous kernel in the sequence
       description: Which chapter does this one build on
-      placeholder: "05_vector_loop_fixed"
+      placeholder: "corpus/basics/05_fixed_loop"
     validations:
       required: true
 

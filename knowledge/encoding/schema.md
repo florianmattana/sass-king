@@ -45,4 +45,4 @@ Use this table shape:
 * Prefer normalized keys that can become matcher signatures.
 * Add short literal explanations to tables that introduce an instruction, operand, field, or canonical form. The goal is glossary value, not long prose inside a table.
 * Separate target-specific claims (`sm_120` vs `sm_120a`).
-* Keep chapter-local narrative in `tensor_cores/*/conclusion*.md`; keep reusable matching facts here.
+* Keep chapter-local narrative in `corpus/tensor_cores/*/conclusion*.md`; keep reusable matching facts here.

@@ -35,7 +35,7 @@
 ## Commands
 
 ```bash
-cd tensor_cores/22_stmatrix
+cd corpus/tensor_cores/22_stmatrix
 bash compile.sh
 ```
 

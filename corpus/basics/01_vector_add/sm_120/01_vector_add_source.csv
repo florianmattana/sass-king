@@ -1,5 +1,5 @@
 ==WARNING== No metrics to collect found in sections.
-==PROF== Connected to process 20804 (/home/florian/king-sass/vector_add01)
+==PROF== Connected to process 20804 (<local-build-dir>/vector_add01)
 ==PROF== Disconnected from process 20804
 "Kernel Name","vector_add(const float *, const float *, float *, int)"
 "Address","Source"

@@ -53,7 +53,7 @@
 ## Commands
 
 ```bash
-cd tensor_cores/24_production_mini_gemm
+cd corpus/tensor_cores/24_production_mini_gemm
 bash compile.sh
 for exe in build/24*; do "$exe"; done
 ```

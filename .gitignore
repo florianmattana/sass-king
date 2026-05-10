@@ -1,10 +1,13 @@
-# Private methodology files (never push)
+# Local-only methodology files
 DECISIONS.md
 AUDIT.md
 ATOMS_CATALOG.md
 
 # Generated local build artifacts
-tensor_cores/22_stmatrix/build/
-tensor_cores/23_fragment_layout/build/
-tensor_cores/24_production_mini_gemm/build/
-tensor_cores/25_stsm_epilogue/build/
+corpus/tensor_cores/19_sparse_mma/build/
+corpus/tensor_cores/20_control_flow/build/
+corpus/tensor_cores/21_divergence_reconvergence/build/
+corpus/tensor_cores/22_stmatrix/build/
+corpus/tensor_cores/23_fragment_layout/build/
+corpus/tensor_cores/24_production_mini_gemm/build/
+corpus/tensor_cores/25_stsm_epilogue/build/

@@ -50,7 +50,7 @@ body:
     id: kernel_ref
     attributes:
       label: Which kernel chapter do you want to dump
-      placeholder: "01_vector_add"
+      placeholder: "corpus/basics/01_vector_add"
     validations:
       required: true
 
