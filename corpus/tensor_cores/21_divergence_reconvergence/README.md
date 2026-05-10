@@ -42,7 +42,7 @@
 ## Commands
 
 ```bash
-cd tensor_cores/21_divergence_reconvergence
+cd corpus/tensor_cores/21_divergence_reconvergence
 bash compile.sh
 ```
 

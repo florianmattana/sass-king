@@ -49,7 +49,7 @@
 ## Commands
 
 ```bash
-cd tensor_cores/25_stsm_epilogue
+cd corpus/tensor_cores/25_stsm_epilogue
 bash compile.sh
 for exe in build/25*; do "$exe"; done
 ```

@@ -7,7 +7,7 @@ body:
     id: file_path
     attributes:
       label: File path
-      placeholder: "05_vector_loop_fixed/conclusions.md"
+      placeholder: "corpus/basics/05_fixed_loop/conclusion05.md"
     validations:
       required: true
 

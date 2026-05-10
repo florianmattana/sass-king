@@ -9,10 +9,13 @@
 </p>
 
 <p align="center">
+  <a href="https://florianmattana.com/posts/sass_king/">Article 1</a> ·
+  <a href="https://florianmattana.com/posts/sass-king-part-2-reading-the-compiler-mind/">Article 2</a> ·
   <a href="knowledge/README.md">Knowledge base</a> ·
   <a href="knowledge/SASS_INSTRUCTIONS_SM120.md">SM120 instruction glossary</a> ·
   <a href="knowledge/encoding/">Encoding notes</a> ·
-  <a href="tensor_cores/README.md">Tensor-core chapters</a> ·
+  <a href="docs/START_HERE.md">Start here</a> ·
+  <a href="corpus/tensor_cores/README.md">Tensor-core chapters</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -36,23 +39,29 @@ SASS King fills that gap by combining controlled micro-kernels, raw SASS reading
 
 | Area | Status | Where |
 |---|---|---|
-| SM120 teaching kernels | Complete through kernels 01-12 | `01_vector_add/` to `12_register_spill/` |
-| Tensor-core studies | Complete through Kernel 25 | `tensor_cores/` |
+| SM120 teaching kernels | Complete through kernels 01-12 | `corpus/basics/01_vector_add/` to `corpus/math_and_spills/12_register_spill/` |
+| Tensor-core studies | Complete through Kernel 25 | `corpus/tensor_cores/` |
 | Global findings | Active source of truth | `knowledge/FINDINGS.md` |
 | SM120 instruction glossary | Active, evidence-backed | `knowledge/SASS_INSTRUCTIONS_SM120.md` |
 | Encoding pilots | Started with `LDSM`, `STSM`, `QMMA` | `knowledge/encoding/` |
+| denvdis cross-validation | Initial pass complete; deeper control-code gaps remain | `knowledge/DENVDIS_INTEGRATION.md` |
 | Pattern library | Next phase | `patterns/` |
 | Production audits | Planned | `production/` |
 
 ## Start Here
 
-- New to the project: read the [knowledge base index](knowledge/README.md).
+- New to the project: read [Start Here](docs/START_HERE.md).
+- Want the project-wide map: read the [knowledge base index](knowledge/README.md).
 - Want the current instruction map: read [SASS instructions on SM120 / SM120a](knowledge/SASS_INSTRUCTIONS_SM120.md).
 - Want the raw source of truth: read [findings](knowledge/FINDINGS.md).
-- Want tensor-core evidence: start with [tensor-core chapters](tensor_cores/README.md).
+- Want tensor-core evidence: start with [tensor-core chapters](corpus/tensor_cores/README.md).
 - Want to contribute dumps or corrections: read [contributing](CONTRIBUTING.md).
+- Want the v0.1 boundary: read [release notes](RELEASE_NOTES.md).
 
-Full context for the first public writeup: [Part 1 - Reading NVIDIA SASS from First Principles](https://florianmattana.com/p/reading-nvidia-sass-from-first-principles).
+Public writeups:
+
+- [Part 1 - Reading NVIDIA SASS from First Principles](https://florianmattana.com/posts/sass_king/)
+- [Part 2 - Reading the Compiler's Mind](https://florianmattana.com/posts/sass-king-part-2-reading-the-compiler-mind/)
 
 ## Methodology
 
@@ -84,7 +93,36 @@ The first pass focuses on the SM120 tensor-core and memory pipeline:
 
 The project does not pretend the ISA is complete yet. The public glossary tracks what is observed and explained; deeper pages under `knowledge/encoding/` track families with enough evidence for matcher-style documentation.
 
+SASS King does not compete with bit-level SASS disassemblers. The project uses local dumps as primary evidence and may use `redplait/denvdis` as a cross-check for instruction fields, scheduling tables, predicates, and register tracking. denvdis can validate low-level encoding interpretations; SASS King owns the controlled-variation evidence, semantic pattern layer, and production-audit interpretation.
+
 ## Roadmap
+
+```mermaid
+flowchart LR
+    P1["Phase 1<br/>Teaching kernels<br/>01-12"] --> P2["Phase 2<br/>SM120 tensor-core corpus<br/>13-25"]
+    P2 --> P25["Phase 2.5<br/>denvdis cross-validation<br/>bit-level backend"]
+    P25 --> P3["Phase 3<br/>Pattern library<br/>compiler signatures"]
+    P3 --> P4["Phase 4<br/>Production audits<br/>real kernels"]
+    P4 --> P5["Phase 5<br/>Audit tool<br/>cubin reports"]
+    P5 --> P6["Phase 6<br/>Cross-architecture replay<br/>SM80/86/89/90a/100a/120"]
+
+    classDef done fill:#0b6d55,color:#fff,stroke:#0b6d55;
+    classDef active fill:#f4c95d,color:#111,stroke:#b89422;
+    classDef planned fill:#1f2937,color:#fff,stroke:#6b7280;
+    class P1,P2 done;
+    class P25 active;
+    class P3,P4,P5,P6 planned;
+```
+
+| Phase | Status | Output | Why it matters |
+|---|---|---|---|
+| 1. Teaching kernels | Done | `corpus/basics/`, `corpus/warp_collectives/`, `corpus/math_and_spills/` | Establishes the reading vocabulary from controlled CUDA-to-SASS experiments. |
+| 2. SM120 tensor-core corpus | Done | `corpus/tensor_cores/13_hmma_fp16/` to `25_stsm_epilogue/` | Captures the first SM120 / SM120a tensor-core, matrix-memory, control-flow, and epilogue evidence set. |
+| 2.5. denvdis cross-validation | Initial pass complete | `knowledge/DENVDIS_INTEGRATION.md`, `knowledge/encoding/CONTROL_CODE.md` | Uses denvdis as a bit-level cross-check without replacing local dump evidence. Full stall/yield bit placement remains open. |
+| 3. Pattern library | Next | `patterns/` | Turns repeated compiler/SASS structures into reusable signatures. |
+| 4. Production audits | Planned | `production/` | Tests whether corpus patterns explain real kernels from production libraries. |
+| 5. Audit tool | Planned | cubin-to-report pipeline | Makes the pattern layer scriptable and repeatable. |
+| 6. Cross-architecture replay | Planned | SM80, SM86, SM89, SM90a, SM100a, SM120 comparisons | Separates architecture-specific facts from general NVIDIA SASS behavior. |
 
 ### Phase 1 - Teaching Kernels
 
@@ -109,6 +147,12 @@ Kernels 13-25 cover the current SM120 tensor-core path:
 | 23 | FP4 / FP6 fragment layout probes |
 | 24 | Production mini-GEMM audit |
 | 25 | STSM epilogue layout and storeback semantics |
+
+### Phase 2.5 - denvdis Cross-Validation
+
+Validate `redplait/denvdis` as the bit-level cross-check backend for SM120 / SM120a before formalizing the Phase 3 pattern library. The pass runs `nvd -O`, `nvd -S`, `nvd -p`, and where useful `nvd -T` on representative local cubins or dumps covering `HMMA`, `QMMA`, `QMMA.SF`, `QMMA.SP`, `OMMA`, `LDSM`, `STSM` b16/b8, `LDGSTS`, `DEPBAR`, and divergence markers.
+
+The output is `knowledge/DENVDIS_INTEGRATION.md`: a factual compatibility table from family to denvdis recognition status, modifier coverage, exposed control-code fields, and the SASS King action. denvdis output is supporting evidence, not a replacement for local dump observations.
 
 ### Phase 3 - Pattern Library
 
@@ -146,15 +190,19 @@ Replay the methodology on additional targets:
 
 ```text
 .
-├── 01_vector_add/ ... 12_register_spill/   # Phase 1 teaching kernels
-├── tensor_cores/                           # Phase 2 tensor-core studies
+├── corpus/                                # Controlled kernels, dumps, and chapter writeups
+│   ├── basics/                            # Kernels 01-08: scalar/vector and memory basics
+│   ├── warp_collectives/                  # Kernels 09-10: shuffle, vote, reduction
+│   ├── math_and_spills/                   # Kernels 11-12: slow paths and spills
+│   └── tensor_cores/                      # Kernels 13-25: tensor-core studies
 ├── knowledge/                              # Findings, glossary, encoding notes
 │   ├── FINDINGS.md
 │   ├── SASS_INSTRUCTIONS_SM120.md
 │   └── encoding/
 ├── patterns/                               # Coming: formal pattern library
 ├── production/                             # Coming: production-kernel audits
-└── guide/                                  # SASS reading guide material
+├── docs/                                   # Onboarding and release-facing notes
+└── guide/                                  # External SASS reading guide submodule
 ```
 
 Each chapter folder contains source kernels, compiled artifacts when relevant, SASS dumps when they are part of the validated evidence set, and a `conclusion<N>.md` writeup.
@@ -169,10 +217,14 @@ Each chapter folder contains source kernels, compiled artifacts when relevant, S
 
 ## Related Work
 
-- [redplait/denvdis](https://github.com/redplait/denvdis) for opcode tables, latency extraction, scheduling analysis, and cubin patching.
-- [kuterdinel.com/nv_isa](https://kuterdinel.com/nv_isa/) for a fuzzed ISA specification.
-- Jia et al. 2018, "Dissecting the NVIDIA Volta GPU Architecture via Microbenchmarking."
-- NVIDIA `cuda-binary-utilities` documentation.
+- [Jia et al. 2018, "Dissecting the NVIDIA Volta GPU Architecture via Microbenchmarking"](https://arxiv.org/abs/1804.06826) for the empirical microbenchmarking discipline behind latency, throughput, and dependency validation.
+- [kuterdinel.com/nv_isa](https://kuterdinel.com/nv_isa/) for fuzzed NVIDIA ISA encoding work, especially the idea of deriving machine-readable encoding rules from disassembler behavior.
+- [redplait/denvdis](https://github.com/redplait/denvdis) for opcode tables, bit-level disassembly, encoding-field inspection, scheduling analysis, register tracking, and cubin manipulation. The extracted [SM120 data12 tables](https://github.com/redplait/denvdis/tree/master/data12) are used as a low-level cross-check while local dumps remain primary evidence.
+- Redplait tooling and notes: [ced cubin editor](https://redplait.blogspot.com/2025/07/ced-sed-like-cubin-editor.html), [SASS disassembly Perl bindings](https://redplait.blogspot.com/2025/10/sass-disasm-on-perl.html), [SASS latency analysis](https://redplait.blogspot.com/2026/04/sass-latency-analysis.html), and [libcuda/nvasm_internal notes](https://redplait.blogspot.com/2025/12/libcudaso-internals.html).
+- [Huerta et al. 2025](https://arxiv.org/abs/2503.20481) for reverse-engineering compiler-guided scheduling, control codes, dependency counters, reuse flags, and yield behavior.
+- [Yan et al. 2026](https://arxiv.org/abs/2604.26889) for the driver-layer launch and pushbuffer analysis below SASS.
+- [MaxAS](https://github.com/NervanaSystems/maxas) and [TuringAS](https://github.com/daadaada/turingas) as prior public SASS assembler efforts for older NVIDIA architectures.
+- NVIDIA [CUDA Binary Utilities](https://docs.nvidia.com/cuda/cuda-binary-utilities/) documentation for official cubin, fatbin, and disassembly tooling.
 
 SASS King operates at the algorithmic pattern layer: recognizing how compiled kernels are structured and connecting those structures to source-level optimization decisions.
 

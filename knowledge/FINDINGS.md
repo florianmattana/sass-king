@@ -1,13 +1,93 @@
 # Findings and open hypotheses
 
-Running log of observations and hypotheses, organized by kernel chapter.
+Primary research log for SASS King observations, inferences, resolved hypotheses, and open gaps.
 
-Notation:
-* **[OBS]** verified observation from a SASS dump
+This file is intentionally evidence-first. It preserves the chapter-by-chapter record because many conclusions depend on the exact controlled variant that produced them. The indexes below are an orientation layer only; the authoritative details remain in the chapter sections.
+
+## How to read this file
+
+Use this file in three passes:
+
+1. Start with the thematic index to find the relevant area.
+2. Jump to the chapter that first established the evidence.
+3. Promote only stable, reusable facts into `knowledge/SASS_INSTRUCTIONS_SM120.md`, `knowledge/encoding/`, or future `patterns/` pages.
+
+Do not treat denvdis, gpuasm, Nsight Compute, or external papers as replacements for local dump evidence. They are supporting references unless the claim explicitly says otherwise.
+
+## Claim tags
+
+* **[OBS]** verified observation from a SASS dump, log, runtime output, or profile
 * **[INF]** inference from one or more observations; the evidence chain must be stated
 * **[HYP]** open hypothesis, to be tested
-* **[RES]** resolved hypothesis (rejected or confirmed)
+* **[RES]** resolved hypothesis, rejected or confirmed
 * **[GAP]** open question not answered by the current evidence
+
+## Current status map
+
+| Area | Current state | Primary evidence |
+|---|---|---|
+| Baseline CUDA-to-SASS reading | Established for simple kernels, constants, loops, shared/global memory, warp collectives, slowpaths, and spills. | Kernels 01-12 |
+| SM120 / SM120a tensor-core corpus | Established through HMMA, QMMA, QMMA.SF, QMMA.SP, OMMA.SF, LDSM, LDGSTS, DEPBAR, STSM, divergence, and epilogues. | Kernels 13-25 |
+| Control-code model | Partially decoded and cross-checked; QMMA dtype bits, MMA-chain bits, `DEPBAR.LE SB0, N`, reuse labels, denvdis scoreboard names, and scheduling classes are documented. Full stall/yield bit placement remains open. | Kernels 13-18, 24-25, `knowledge/encoding/CONTROL_CODE.md`, denvdis pass |
+| Pattern methodology | Audit confidence levels C0-C6 are defined; Phase 3 patterns should carry these levels when promoted. | Audit confidence framework, kernels 20-25 |
+| Production audit readiness | First-pass production-like mini-GEMM audit is complete, but full production-library audits remain planned. | Kernel 24, audit gaps section |
+| Cross-architecture coverage | Planned; current findings are mostly SM120 / SM120a unless explicitly stated otherwise. | Future Phase 6 |
+
+## Thematic index
+
+| Theme | Start here | Main evidence |
+|---|---|---|
+| Reading a SASS dump | Reference SASS reading template; global diagnostic workflow | Kernels 01, 13, 18, 24 |
+| Compiler heuristics and source-to-SASS surprises | Runtime loop cascades, constant loading, template specialization, production audit gaps | Kernels 04, 05, 20, 24; audit gaps |
+| Scoreboards, stalls, reuse, and control codes | Scoreboard model, HMMA/QMMA control tables, LDSM/LDGSTS/DEPBAR behavior | Kernels 03, 13, 14, 17, 18; `knowledge/encoding/CONTROL_CODE.md` |
+| Global and shared memory | Descriptor-based global addressing, shared addressing, vectorized loads, async copy | Kernels 01, 06, 08, 17, 18 |
+| Uniform-register flow | `LDCU`, `S2UR`, `UMOV`, `ULEA`, `R2UR`, uniform addressing | Kernels 01, 06, 07, 12, 21 |
+| Arithmetic lowering | FMA fusion, FP constants, integer division, math-library slowpaths, MUFU, polynomial helpers | Kernels 02-05, 11 |
+| Register pressure and local memory | Stack frame mechanics, `STL`, `LDL`, rolling-window spill, vectorized spill | Kernel 12 |
+| Warp collectives | `SHFL`, `VOTE`, `REDUX`, `WARPSYNC`, warp-level reduction signatures | Kernels 09, 10, 21 |
+| Tensor-core compute | HMMA, QMMA, QMMA.SF, QMMA.SP, OMMA.SF, sparse and block-scaled forms | Kernels 13-16, 19, 23, 24 |
+| Matrix memory and epilogues | `LDSM`, `STSM`, matrix-store b16/b8, storeback semantics | Kernels 17, 22, 25 |
+| Control flow and divergence | Loop lowering, back-edge detection, predication, `BSSY`, `BSYNC`, guarded warp-level ops | Kernels 20, 21 |
+| Production audit method | Confidence framework, mini-GEMM segmentation, open audit gaps | Audit confidence framework, kernels 24-25, audit gaps |
+
+## Chapter index
+
+| Chapter | Focus | Best used for |
+|---|---|---|
+| 01 | Vector add baseline | Prologue, arguments, descriptors, bounds checks, global loads/stores |
+| 02 | `a + b + 1.0f` | Non-fusion, register reuse, localized SASS diffs |
+| 03 | `a*b + c` | FMA fusion, scoreboards, stall/yield basics |
+| 04 | Runtime loop count | ptxas loop cascades, Duff-style lowering, HFMA2 constants |
+| 05 | Compile-time loop count | Full unroll contrast, FFMA immediate rules, constant strategy |
+| 06 | Shared memory scalar | Shared addressing, barriers, modulo/division helpers |
+| 07 | UMOV investigation | Shared-memory base setup, `UMOV 0x400`, dynamic shared memory |
+| 08 | Vectorized global memory | LDG/STG width selection and alignment constraints |
+| 09 | Warp shuffle and vote | `SHFL`, `VOTE`, `WARPSYNC`, match/active-mask forms |
+| 10 | REDUX | Hardware warp reductions and reduction diagnostics |
+| 11 | Slowpath arithmetic | Division, math library lowering, MUFU, local CALL, polynomial helpers |
+| 12 | Register spill | Stack frames, `STL`/`LDL`, local memory and anti-spill patterns |
+| 13 | HMMA baseline | FP16/BF16 tensor-core baseline, accumulator chains, latency |
+| 14 | QMMA FP8/FP6/FP4 | Dense low-precision MMA, dtype bits, scoreboard scheme |
+| 15 | Narrow MMA | FP6/FP4 cross-checks against chapter 14 |
+| 16 | FP4 peak / block-scaled MMA | `OMMA`, block-scaled operands, scaling mode bits |
+| 17 | LDSM | Matrix loads, fragment supply, LDSM latency and chains |
+| 18 | Pipelined tile / cp.async | `LDGSTS`, `LDGDEPBAR`, `DEPBAR`, async-copy pipeline |
+| 19 | Sparse MMA | `QMMA.SP`, `QMMA.SF.SP`, metadata channels |
+| 20 | Control flow | Loop lowering, back edges, branches, production audit implications |
+| 21 | Divergence and reconvergence | `BSSY`, `BSYNC`, predication, guarded HMMA/WARPSYNC |
+| 22 | STSM / stmatrix | Matrix-store family, b16 storeback, runtime gaps |
+| 23 | FP4 / FP6 fragment layout | Layout probes, scale vectors, metadata separation |
+| 24 | Production mini-GEMM | End-to-end production-like SASS segmentation and audit rules |
+| 25 | STSM epilogue | Epilogue/storeback semantics, b8 STSM, narrowing and storeback variants |
+
+## Document layout
+
+After the indexes, the file is still organized as:
+
+1. Audit confidence framework.
+2. Chapter-local research log, kernels 01-25.
+3. Cross-chapter summaries and reusable diagnostic workflows.
+4. Production-audit gaps and Phase 3 gates.
 
 ---
 
@@ -2921,6 +3001,8 @@ During an attempt to audit a production fused FP4 attention kernel on SM120, sev
 * [RES] GAP-audit-7 is closed at the reporting-methodology level by the C0-C6 audit confidence framework.
 * [RES] Chapter 25 is complete for first-pass STSM epilogue/storeback SASS coverage and runtime smoke execution, including STSM layout variants, STS fallback, MMA-to-STSM paths, F16/BF16 narrowing, barrier/no-barrier contrast, split accumulator storeback, noncontiguous global stores, and register-pressure behavior.
 * [GAP] Chapter 25 full lane-to-value STSM semantic decode remains open over the captured runtime words.
+* [INF] `knowledge/encoding/CONTROL_CODE.md` now records the partial SM120 / SM120a control-code field model. Resolved fields include QMMA dtype and MMA-chain bits, `DEPBAR.LE SB0, N` wait-group bits, reuse labels, denvdis scoreboard field names, and denvdis scheduling classes. Full stall/yield bit placement and the exact mapping between denvdis `cword` and the full local SASS control-code hex remain open.
+* [RES] The targeted denvdis gap pass cross-checks `QMMA.SF.SP`, `OMMA.SF.SP`, `WARPSYNC.ALL`, and `REDUX.SUM.S32` with `nvd -O -S -p` and `not_found 0`. These close the remaining denvdis-recognition gaps from the initial Phase 2.5 representative pass, while deeper bit-placement gaps remain scoped in `CONTROL_CODE.md`.
 
 ### Decision: Phase 3 gated
 

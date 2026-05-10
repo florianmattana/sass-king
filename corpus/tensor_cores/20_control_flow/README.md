@@ -45,7 +45,7 @@
 ## Commands
 
 ```bash
-cd tensor_cores/20_control_flow
+cd corpus/tensor_cores/20_control_flow
 bash compile.sh
 ```
 

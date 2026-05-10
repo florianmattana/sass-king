@@ -45,7 +45,7 @@
 ## Commands
 
 ```bash
-cd tensor_cores/23_fragment_layout
+cd corpus/tensor_cores/23_fragment_layout
 bash compile.sh
 ```
 
