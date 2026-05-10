@@ -29,6 +29,12 @@ SASS King is a systematic reverse-engineering project for NVIDIA SASS, the nativ
 
 The goal is practical: help a kernel engineer open a SASS dump, recognize compiler patterns, identify performance-relevant structures, and connect the binary back to source-level optimization decisions.
 
+If that matters to you:
+
+⭐ **Star** the repo to bookmark it and signal that open SASS work is worth doing.
+
+👀 **Watch** the repo to follow new chapters, encoding pages, and (eventually) the tooling: disassembler, audit CLI, Ghidra plugin.
+
 ## Why It Exists
 
 The last broad public SASS reverse-engineering work comparable in spirit was Jia et al. on Volta and Turing in 2018. Ampere, Hopper, and Blackwell have changed the instruction mix substantially: async copy paths, tensor-core families, matrix load/store instructions, sparse and scaled MMA forms, and new uniform-register flows.
